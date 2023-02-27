@@ -1,0 +1,164 @@
+Sound:
+    N_FFT: 1024
+    Mel_Dim: 80
+    Frame_Length: 1024
+    Frame_Shift: 256
+    Sample_Rate: 22050
+    Mel_F_Min: 0
+    Mel_F_Max: 8000
+    F0_Min: 50
+    F0_Max: 880
+
+Feature_Type: 'Mel' #'Spectrogram', 'Mel'
+
+Tokens: 104
+
+
+Encoder:
+    Size: 256
+    Transformer:
+        Stack: 4
+        Head: 2
+        Dropout_Rate: 0.1
+        FFN:
+            Kernel_Size: 9
+            Dropout_Rate: 0.1
+
+Variance_Block:
+    Duration_Predictor:
+        Stack: 2
+        Dropout_Rate: 0.1
+    Gaussian_Upsampler:
+        Kernel_Size: 3
+        Range_Predictor:
+            Stack: 2
+            Dropout_Rate: 0.1
+
+Acoustic_Encoder:
+    WaveNet_Stack: 4
+    Conv_Stack: 4
+    Kernel_Size: 5
+    Dilation_Rate: 1
+    Dropout_Rate: 0.1
+
+Acoustic_Flow:
+    Stack: 4
+    Conv_Stack: 4
+    Kernel_Szie: 5
+    Dilation_Rate: 1
+    Dropout_Rate: 0.1
+
+Token_Predictor:
+    Size: 256
+    LSTM:
+        Stack: 2
+        Dropout_Rate: 0.1
+    
+Linguistic_Encoder:
+    WaveNet_Stack: 4
+    Conv_Stack: 4
+    Kernel_Size: 5
+    Dilation_Rate: 1
+    Dropout_Rate: 0.1
+
+Linguistic_Flow:
+    Stack: 4
+    Conv_Stack: 4
+    Kernel_Szie: 5
+    Dilation_Rate: 1
+    Dropout_Rate: 0.1
+
+Decoder:
+    Prenet:
+        Kernel_Size: 7
+    Upsample:
+        Base_Size: 512
+        Rate: [8, 8, 2, 2]
+        Kernel_Size: [16, 16, 4, 4]
+    Residual_Block:
+        Kernel_Size: [3, 7, 11]
+        Dilation_Size: [[1, 3, 5], [1, 3, 5], [1, 3, 5]]
+    Postnet:
+        Kernel_Size: 7
+    LeakyRelu_Negative_Slope: 0.1
+
+Token_Path: 'D:/Datasets/22K.EmoVCTK/Token.yaml'
+Duration_Path: './Duration_KREN1391.pickle'
+Spectrogram_Range_Info_Path: 'D:/Datasets/22K.EmoVCTK/Spectrogram_Range_Info.yaml'
+Mel_Range_Info_Path: 'D:/Datasets/22K.EmoVCTK/Mel_Range_Info.yaml'
+Log_F0_Info_Path: 'D:/Datasets/22K.EmoVCTK/Log_F0_Info.yaml'
+Log_Energy_Info_Path: 'D:/Datasets/22K.EmoVCTK/Log_Energy_Info.yaml'
+Speaker_Info_Path: 'D:/Datasets/22K.EmoVCTK/Speaker_Info.yaml'
+Emotion_Info_Path: 'D:/Datasets/22K.EmoVCTK/Emotion_Info.yaml'
+Language_Info_Path: 'D:/Datasets/22K.EmoVCTK/Language_Info.yaml'
+Gender_Info_Path: 'D:/Datasets/22K.EmoVCTK/Gender_Info.yaml'
+Language_and_Gender_Info_by_Speaker_Path: 'D:/Datasets/22K.EmoVCTK/Language_and_Gender_Info_by_Speaker.yaml'
+Train:
+    Train_Pattern:
+        Path: 'D:/Datasets/22K.EmoVCTK/Train'
+        Metadata_File: 'METADATA.PICKLE'
+        Feature_Length:
+            Min: 50
+            Max: 1200
+        Text_Length:
+            Min: 1
+            Max: 200
+        Accumulated_Dataset_Epoch: 1   # This is to prevent slow down from torch.utils.data.DataLoader when the number of patterns is small.
+        Augmentation_Ratio: 0.10
+    Eval_Pattern:
+        Path: 'D:/Datasets/22K.EmoVCTK/Eval'
+        Metadata_File: 'METADATA.PICKLE'
+        Feature_Length:
+            Min: 50
+            Max: 1200
+        Text_Length:
+            Min: 10
+            Max: 200
+    Num_Workers: 0
+    Batch_Size: 12
+    Segment_Size: 128
+    Learning_Rate:
+        Initial: 1.0e-4
+        Warmup_Step: 4000
+    ADAM:
+        Beta1: 0.9
+        Beta2: 0.999
+        Epsilon: 1.0e-7
+    Weight_Decay: 1.0e-6
+    Gradient_Norm: 1.0
+    Max_Step: 200000
+    Discrimination_Step: 0
+    Checkpoint_Save_Interval: 5000
+    Logging_Interval: 1
+    Evaluation_Interval: 1000
+    Inference_Interval: 5000
+    Initial_Inference: true
+    Inference_in_Train:
+        Text: [
+            'Do not kill the goose that lays the golden eggs.',
+            'A good medicine tastes bitter.',
+            'Do not count your chickens before they hatch.',
+            'If you laugh, blessings will come your way.'
+            ]
+
+Inference_Batch_Size: 16
+
+Inference_Path: './results/HierSpeech/Inference'
+Checkpoint_Path: './results/HierSpeech/Checkpoint'
+Log_Path: './results/HierSpeech/Log'
+
+Weights_and_Biases:
+    # Use: true
+    Use: false
+    Project: 'DiffTTS'
+    Entity: 'codejin'
+    Name: 'HierSpeech'
+    Save_Checkpoint:
+        Use: false
+        Interval: 50000 # Unlike local, The capacity of WandB is small.
+
+Use_Mixed_Precision: false   # Don't use mixed precision in this model.
+Use_Multi_GPU: false
+Device: '0'
+# Use_Multi_GPU: true
+# Device: '0,1,2,3,4,5,6,7'

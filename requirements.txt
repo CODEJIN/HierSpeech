@@ -1,0 +1,5 @@
+librosa
+matplotlib
+tensorboard
+torch
+wandb
