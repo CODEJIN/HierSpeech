@@ -14,5 +14,4 @@
 
 temp.py
 *.pickle
-*.pts
 Hyper_Parameters_Local.yaml

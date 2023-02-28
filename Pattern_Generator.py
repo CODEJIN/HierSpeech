@@ -17,11 +17,6 @@ regex_Checker = re.compile('[가-힣A-Z,.?!\'\-\s]+')
 top_db_dict = {'KSS': 35, 'Emotion': 30, 'AIHub': 30, 'VCTK': 15, 'Libri': 23}
 
 if __name__ == '__main__':
-    from Wav2Vec_based_Duration_Predictor.Duration_Predictor import Duration_Predictor    
-    duration_predictor_dict = {
-        'Korean': Duration_Predictor(pretrained_model_path= './Wav2Vec_based_Duration_Predictor/korean_wav2vec2'),
-        'English': Duration_Predictor(pretrained_model_path= 'facebook/wav2vec2-base-960h')
-        }
     ge2e_generator = torch.jit.load('ge2e.pts')
 
 def Text_Filtering(text):
@@ -69,7 +64,6 @@ def Pattern_Generate(
     f0_max: int,
     center: bool= False,
     ):
-
     audio, _ = librosa.load(path, sr= sample_rate)
     audio = librosa.util.normalize(audio) * 0.95
     audio = audio[:audio.shape[0] - (audio.shape[0] % hop_size)]
@@ -91,7 +85,6 @@ def Pattern_Generate(
         fmax= fmax,
         center= center
         ).squeeze(0).T.numpy()
-
     log_f0 = rapt(
         x= audio * 32768,
         fs= sample_rate,
@@ -100,7 +93,6 @@ def Pattern_Generate(
         max= f0_max,
         otype= 2    # log
         )
-
     log_energy = spec_energy(
         y= torch.from_numpy(audio).float().unsqueeze(0),
         n_fft= n_fft,
@@ -108,9 +100,19 @@ def Pattern_Generate(
         win_size= win_size,
         center= center
         ).squeeze(0).log().numpy()
+    
+    nonsilence_frames = np.where(log_f0 > 0.0)[0]
+    if len(nonsilence_frames) < 2:
+        return None, None, None, None, None
+    initial_silence_frame, *_, last_silence_frame = nonsilence_frames
+    initial_silence_frame = max(initial_silence_frame - 4, 0)
+    last_silence_frame = min(last_silence_frame + 4, log_f0.shape[0])
 
-    if log_f0.shape[0] != mel.shape[0]:
-        print(path, audio.shape[0], log_f0.shape[0], mel.shape[0])
+    audio = audio[initial_silence_frame * hop_size:last_silence_frame * hop_size]
+    spect = spect[initial_silence_frame:last_silence_frame]
+    mel = mel[initial_silence_frame:last_silence_frame]
+    log_f0 = log_f0[initial_silence_frame:last_silence_frame]
+    log_energy = log_energy[initial_silence_frame:last_silence_frame]
 
     return audio, spect, mel, log_f0, log_energy
 
@@ -141,35 +143,9 @@ def Pattern_File_Generate(path, speaker, emotion, language, gender, dataset, tex
         f0_min= hp.Sound.F0_Min,
         f0_max= hp.Sound.F0_Max
         )
+    if audio is None:
+        return
     
-    try:
-        with torch.inference_mode():
-            durations, initial_silence_frame = duration_predictor_dict[language].Get_Duration(
-                wav_path= path,
-                transcript= text,
-                feature_sampling_rate= hp.Sound.Sample_Rate,
-                feature_hop_size= hp.Sound.Frame_Shift,
-                )
-    except:
-        return
-    last_silence_frame = mel.shape[0] - initial_silence_frame - sum(durations)
-
-    if len(durations) != len(decomposed):
-        logging.warning(
-            f'{path} is skipped because irregular duration: duration({len(durations)}), decomposed({len(decomposed)})'
-            )
-        print(duration_predictor_dict[language].Get_Duration_Second(
-            wav_path= path,
-            transcript= text
-            ))
-        print(decomposed)
-        return
-
-    audio = audio[initial_silence_frame * hp.Sound.Frame_Shift:-last_silence_frame * hp.Sound.Frame_Shift]
-    spect = spect[initial_silence_frame:-last_silence_frame]
-    mel = mel[initial_silence_frame:-last_silence_frame]
-    log_f0 = log_f0[initial_silence_frame:-last_silence_frame]
-    log_energy = log_energy[initial_silence_frame:-last_silence_frame]
     with torch.inference_mode():
         mel_for_ge2e = mel
         if mel_for_ge2e.shape[0] < 240:
@@ -184,7 +160,6 @@ def Pattern_File_Generate(path, speaker, emotion, language, gender, dataset, tex
         'Mel': mel.astype(np.float32),
         'Log_F0': log_f0.astype(np.float32),
         'Log_Energy': log_energy.astype(np.float32),
-        'Duration': durations,
         'GE2E': ge2e,
         'Speaker': speaker,
         'Emotion': emotion,
@@ -1091,4 +1066,4 @@ if __name__ == '__main__':
     Metadata_Generate()
     Metadata_Generate(eval= True)
 
-# python Pattern_Generator.py -hp Hyper_Parameters_Local.yaml -emo D:/Datasets/Emotion -vctk D:/Datasets/VCTK092 -lj D:/Datasets/LJSpeech -kss D:/Datasets/KSS -evalm 3
+# python Pattern_Generator.py -hp Hyper_Parameters.yaml -lj D:/Datasets/LJSpeech

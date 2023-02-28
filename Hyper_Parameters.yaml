@@ -82,20 +82,20 @@ Decoder:
         Kernel_Size: 7
     LeakyRelu_Negative_Slope: 0.1
 
-Token_Path: 'D:/Datasets/22K.EmoVCTK/Token.yaml'
+Token_Path: 'D:/Datasets/22K.LJ/Token.yaml'
 Duration_Path: './Duration_KREN1391.pickle'
-Spectrogram_Range_Info_Path: 'D:/Datasets/22K.EmoVCTK/Spectrogram_Range_Info.yaml'
-Mel_Range_Info_Path: 'D:/Datasets/22K.EmoVCTK/Mel_Range_Info.yaml'
-Log_F0_Info_Path: 'D:/Datasets/22K.EmoVCTK/Log_F0_Info.yaml'
-Log_Energy_Info_Path: 'D:/Datasets/22K.EmoVCTK/Log_Energy_Info.yaml'
-Speaker_Info_Path: 'D:/Datasets/22K.EmoVCTK/Speaker_Info.yaml'
-Emotion_Info_Path: 'D:/Datasets/22K.EmoVCTK/Emotion_Info.yaml'
-Language_Info_Path: 'D:/Datasets/22K.EmoVCTK/Language_Info.yaml'
-Gender_Info_Path: 'D:/Datasets/22K.EmoVCTK/Gender_Info.yaml'
-Language_and_Gender_Info_by_Speaker_Path: 'D:/Datasets/22K.EmoVCTK/Language_and_Gender_Info_by_Speaker.yaml'
+Spectrogram_Range_Info_Path: 'D:/Datasets/22K.LJ/Spectrogram_Range_Info.yaml'
+Mel_Range_Info_Path: 'D:/Datasets/22K.LJ/Mel_Range_Info.yaml'
+Log_F0_Info_Path: 'D:/Datasets/22K.LJ/Log_F0_Info.yaml'
+Log_Energy_Info_Path: 'D:/Datasets/22K.LJ/Log_Energy_Info.yaml'
+Speaker_Info_Path: 'D:/Datasets/22K.LJ/Speaker_Info.yaml'
+Emotion_Info_Path: 'D:/Datasets/22K.LJ/Emotion_Info.yaml'
+Language_Info_Path: 'D:/Datasets/22K.LJ/Language_Info.yaml'
+Gender_Info_Path: 'D:/Datasets/22K.LJ/Gender_Info.yaml'
+Language_and_Gender_Info_by_Speaker_Path: 'D:/Datasets/22K.LJ/Language_and_Gender_Info_by_Speaker.yaml'
 Train:
     Train_Pattern:
-        Path: 'D:/Datasets/22K.EmoVCTK/Train'
+        Path: 'D:/Datasets/22K.LJ/Train'
         Metadata_File: 'METADATA.PICKLE'
         Feature_Length:
             Min: 50
@@ -106,7 +106,7 @@ Train:
         Accumulated_Dataset_Epoch: 1   # This is to prevent slow down from torch.utils.data.DataLoader when the number of patterns is small.
         Augmentation_Ratio: 0.10
     Eval_Pattern:
-        Path: 'D:/Datasets/22K.EmoVCTK/Eval'
+        Path: 'D:/Datasets/22K.LJ/Eval'
         Metadata_File: 'METADATA.PICKLE'
         Feature_Length:
             Min: 50
