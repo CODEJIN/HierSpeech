@@ -110,21 +110,26 @@ class HierSpeech(torch.nn.Module):
             durations= durations
             )
 
-        encoding_distributions = torch.distributions.Normal(
+        encoding_distributions_prior = torch.distributions.Normal(
             loc= encoding_means @ alignments,
             scale= torch.clamp(encoding_stds @ alignments, min= 1e-5)
             )   # [Batch, Enc_d, Enc_t] @ [Batch, Enc_t, Feature_t] -> [Batch, Enc_d, Feature_t]
 
-        linguistic_distributions = self.linguistic_encoder(
+        linguistic_distributions_prior = self.linguistic_encoder(
             audios= audios,
             lengths= feature_lengths
             )
-        lingustic_samples = linguistic_distributions.rsample()
+        lingustic_samples = linguistic_distributions_prior.rsample()
         linguistic_flows = self.linguistic_flow(
             x= lingustic_samples,
             lengths= feature_lengths,
             reverse= False
             )   # [Batch, Enc_d, Feature_t]
+        encoding_distributions_posterior = torch.distributions.Normal(
+            loc= linguistic_flows,
+            scale= linguistic_distributions_prior.scale
+            )
+        
         token_predictions = self.token_predictor(
             encodings= lingustic_samples,
             lengths= feature_lengths
@@ -134,11 +139,15 @@ class HierSpeech(torch.nn.Module):
             features= linear_spectrograms,
             lengths= feature_lengths
             )
-        acoustic_flows = self.linguistic_flow(
+        acoustic_flows = self.acoustic_flow(
             x= acoustic_distributions.rsample(),
             lengths= feature_lengths,
             reverse= False
             )   # [Batch, Enc_d, Feature_t]
+        linguistic_distributions_posterior = torch.distributions.Normal(
+            loc= acoustic_flows,
+            scale= acoustic_distributions.scale
+            )
         
         acoustic_samples = acoustic_distributions.rsample() # [Batch, Enc_d, Feature_t]
         acoustic_samples_slice, offsets = self.segment(
@@ -161,7 +170,7 @@ class HierSpeech(torch.nn.Module):
         
         return \
             audio_predictions_slice, audios_slice, token_predictions, \
-            encoding_distributions, linguistic_flows, linguistic_distributions, acoustic_flows, \
+            encoding_distributions_prior, encoding_distributions_posterior, linguistic_distributions_prior, linguistic_distributions_posterior, \
             log_duration_predictions, durations, attention_softs, attention_hards, attention_logprobs
 
     def Inference(
@@ -176,7 +185,7 @@ class HierSpeech(torch.nn.Module):
             tokens= tokens,
             lengths= token_lengths
             )
-        alignments, log_duration_predictions, durations = self.variance_block(
+        alignments, _, durations = self.variance_block(
             encodings= encodings,
             encoding_lengths= token_lengths,
             length_scales= length_scales
@@ -191,18 +200,18 @@ class HierSpeech(torch.nn.Module):
             scale= torch.clamp(encoding_stds @ alignments, min= 1e-5)
             )   # [Batch, Enc_d, Enc_t] @ [Batch, Enc_t, Feature_t] -> [Batch, Enc_d, Feature_t]
         
-        linguistic_samples = self.linguistic_flow.forward(
+        linguistic_samples = self.linguistic_flow(
             x= encoding_distributions.rsample(),
             lengths= feature_lengths,
             reverse= True
             )   # [Batch, Enc_d, Feature_t]
-        acoustic_samples = self.acoustic_flow.forward(
+        acoustic_samples = self.acoustic_flow(
             x= linguistic_samples,
             lengths= feature_lengths,
             reverse= True
             )   # [Batch, Enc_d, Feature_t]
         
-        audio_predictions = self.decoder.forward(
+        audio_predictions = self.decoder(
             encodings= acoustic_samples,
             lengths= feature_lengths
             )
