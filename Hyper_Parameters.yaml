@@ -83,7 +83,7 @@ Decoder:
     LeakyRelu_Negative_Slope: 0.1
 
 Token_Path: 'D:/Datasets/22K.LJ/Token.yaml'
-Duration_Path: './Duration_KREN1391.pickle'
+GE2E_Path: 'D:/Datasets/22K.LJ/GE2E.pickle'
 Spectrogram_Range_Info_Path: 'D:/Datasets/22K.LJ/Spectrogram_Range_Info.yaml'
 Mel_Range_Info_Path: 'D:/Datasets/22K.LJ/Mel_Range_Info.yaml'
 Log_F0_Info_Path: 'D:/Datasets/22K.LJ/Log_F0_Info.yaml'

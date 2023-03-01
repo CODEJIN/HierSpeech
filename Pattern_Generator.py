@@ -738,7 +738,7 @@ def Metadata_Generate(eval= False):
             try:
                 if not all([
                     key in pattern_dict.keys()
-                    for key in ('Audio', 'Spectrogram', 'Mel', 'Log_F0', 'Log_Energy', 'Duration', 'GE2E', 'Speaker', 'Emotion', 'Language', 'Gender', 'Dataset', 'Text', 'Decomposed')
+                    for key in ('Audio', 'Spectrogram', 'Mel', 'Log_F0', 'Log_Energy', 'GE2E', 'Speaker', 'Emotion', 'Language', 'Gender', 'Dataset', 'Text', 'Decomposed')
                     ]):
                     continue
                 new_metadata_dict['Audio_Length_Dict'][file] = pattern_dict['Audio'].shape[0]
