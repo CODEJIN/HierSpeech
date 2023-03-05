@@ -139,8 +139,9 @@ class HierSpeech(torch.nn.Module):
             features= linear_spectrograms,
             lengths= feature_lengths
             )
+        acoustic_samples = acoustic_distributions.rsample() # [Batch, Enc_d, Feature_t]
         acoustic_flows = self.acoustic_flow(
-            x= acoustic_distributions.rsample(),
+            x= acoustic_samples,
             lengths= feature_lengths,
             reverse= False
             )   # [Batch, Enc_d, Feature_t]
@@ -148,8 +149,7 @@ class HierSpeech(torch.nn.Module):
             loc= acoustic_flows,
             scale= acoustic_distributions.scale
             )
-        
-        acoustic_samples = acoustic_distributions.rsample() # [Batch, Enc_d, Feature_t]
+
         acoustic_samples_slice, offsets = self.segment(
             patterns= acoustic_samples.permute(0, 2, 1),
             segment_size= self.hp.Train.Segment_Size,
@@ -169,7 +169,7 @@ class HierSpeech(torch.nn.Module):
             )
         
         return \
-            audio_predictions_slice, audios_slice, token_predictions, \
+            audio_predictions_slice, audios_slice, token_predictions, acoustic_distributions, \
             encoding_distributions_prior, encoding_distributions_posterior, linguistic_distributions_prior, linguistic_distributions_posterior, \
             log_duration_predictions, durations, attention_softs, attention_hards, attention_logprobs
 
@@ -241,66 +241,6 @@ class HierSpeech(torch.nn.Module):
                 raise ValueError(f'When scale is a tensor, the dimension 1 of tensor must be same to the token length: {scale.size(1)} != {tokens.size(1)}')
 
         return scale.to(tokens.device)
-
-
-class Phoneme_Predictor(torch.nn.Module): 
-    def __init__(
-        self,
-        in_channels: int,
-        out_channels: int,
-        wavenet_stack: int,
-        conv_stack: int,
-        kernel_size: int,
-        dilation_rate: int,
-        dropout_rate: float
-        ):
-        super().__init__()
-
-        self.prenet = Conv1d(
-            in_channels= in_channels,
-            out_channels= out_channels,
-            kernel_size= 1,
-            w_init_gain= 'linear'
-            )
-
-        self.wavenet_block = torch.nn.ModuleList([
-            WaveNet(
-                calc_channels= out_channels,
-                conv_stack= conv_stack,
-                kernel_size= kernel_size,
-                dilation_rate= dilation_rate,
-                dropout_rate= dropout_rate,
-                )
-            for _ in wavenet_stack
-            ])
-        
-        self.projection = Conv1d(
-            in_channels= out_channels,
-            out_channels= out_channels * 2,
-            kernel_size= 1,
-            w_init_gain= 'linear'
-            )
-            
-    def forward(
-        self,
-        features: torch.Tensor,
-        lengths: torch.Tensor,
-        ) -> torch.distributions.Normal:
-        '''
-        features: [Batch, Feature_d, Feature_t], Spectrogram
-        lengths: [Batch]
-        '''
-        masks = (~Mask_Generate(lengths= lengths, max_length= torch.ones_like(features[0, 0]).sum())).unsqueeze(1).float()  # [Batch, 1, Feature_t]
-
-        encodings = self.prenet(features) * masks   # [Batch, Acoustic_d, Feature_t]
-        for block in self.wavenet_block:
-            encodings = block(encodings, masks)
-
-        means, stds = self.projection(encodings).chunk(chunks= 2, dim= 1)   # [Batch, Acoustic_d, Feature_t] * 2
-        stds = torch.nn.functional.softplus(stds)
-        distributions = torch.distributions.Normal(loc= means, scale= stds) # distribution of [Batch, Acoustic_d, Feature_t]
-
-        return distributions
 
 
 class Feature_Encoder(torch.nn.Module): 

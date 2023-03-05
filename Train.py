@@ -227,7 +227,7 @@ class Trainer:
         attention_priors = attention_priors.to(self.device, non_blocking=True)
 
         with torch.cuda.amp.autocast(enabled= self.hp.Use_Mixed_Precision):
-            audio_predictions_slice, audios_slice, token_predictions, \
+            audio_predictions_slice, audios_slice, token_predictions, acoustic_distributions, \
             encoding_distributions_prior, encoding_distributions_posterior, linguistic_distributions_prior, linguistic_distributions_posterior, \
             log_duration_predictions, durations, attention_softs, attention_hards, attention_logprobs = self.model_dict['HierSpeech'](
                 tokens= tokens,
@@ -299,13 +299,20 @@ class Trainer:
                 input_lengths= feature_lengths,
                 target_lengths= token_lengths - 2
                 )
-        loss_dict['Enc_Linguistic_KLD'] = torch.distributions.kl_divergence(
+        loss_dict['Encoding_KLD'] = torch.distributions.kl_divergence(
             encoding_distributions_prior,
             encoding_distributions_posterior
             ).mean()
-        loss_dict['Linguistic_Acoustic_KLD'] = torch.distributions.kl_divergence(
+        loss_dict['Linguistic_KLD'] = torch.distributions.kl_divergence(
             linguistic_distributions_prior,
             linguistic_distributions_posterior
+            ).mean()
+        loss_dict['Acoustic_KLD'] = torch.distributions.kl_divergence(
+            acoustic_distributions,
+            torch.distributions.Normal(
+                loc= 0.0,
+                scale= 1.0
+                )
             ).mean()
         loss_dict['Attention_Binarization'] = self.criterion_dict['Attention_Binarization'](attention_hards, attention_softs)
         loss_dict['Attention_CTC'] = self.criterion_dict['Attention_CTC'](attention_logprobs, token_lengths, feature_lengths)
@@ -399,7 +406,7 @@ class Trainer:
         linear_spectrograms = linear_spectrograms.to(self.device, non_blocking=True)
         attention_priors = attention_priors.to(self.device, non_blocking=True)
 
-        audio_predictions_slice, audios_slice, token_predictions, \
+        audio_predictions_slice, audios_slice, token_predictions, acoustic_distributions, \
         encoding_distributions_prior, encoding_distributions_posterior, linguistic_distributions_prior, linguistic_distributions_posterior, \
         log_duration_predictions, durations, attention_softs, attention_hards, attention_logprobs = self.model_dict['HierSpeech'](
             tokens= tokens,
@@ -448,13 +455,20 @@ class Trainer:
                 input_lengths= feature_lengths,
                 target_lengths= token_lengths - 2
                 )
-        loss_dict['Enc_Linguistic_KLD'] = torch.distributions.kl_divergence(
+        loss_dict['Encoding_KLD'] = torch.distributions.kl_divergence(
             encoding_distributions_prior,
-            encoding_distributions_posterior,            
+            encoding_distributions_posterior
             ).mean()
-        loss_dict['Linguistic_Acoustic_KLD'] = torch.distributions.kl_divergence(            
+        loss_dict['Linguistic_KLD'] = torch.distributions.kl_divergence(
             linguistic_distributions_prior,
-            linguistic_distributions_posterior,
+            linguistic_distributions_posterior
+            ).mean()
+        loss_dict['Acoustic_KLD'] = torch.distributions.kl_divergence(
+            acoustic_distributions,
+            torch.distributions.Normal(
+                loc= 0.0,
+                scale= 1.0
+                )
             ).mean()
         loss_dict['Attention_Binarization'] = self.criterion_dict['Attention_Binarization'](attention_hards, attention_softs)
         loss_dict['Attention_CTC'] = self.criterion_dict['Attention_CTC'](attention_logprobs, token_lengths, feature_lengths)
