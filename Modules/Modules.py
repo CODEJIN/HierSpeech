@@ -3,7 +3,7 @@ import torch, torchaudio, torchvision
 import math
 from typing import Optional, List, Dict, Tuple, Union
 
-from transformers import WavLMModel
+from transformers import Wav2Vec2ForCTC
 
 from .Nvidia_Alignment_Leraning_Framework import Alignment_Learning_Framework
 from .Gaussian_Upsampler import Gaussian_Upsampler
@@ -197,7 +197,7 @@ class HierSpeech(torch.nn.Module):
 
         encoding_distributions = torch.distributions.Normal(
             loc= encoding_means @ alignments,
-            scale= torch.clamp(encoding_stds @ alignments, min= 1e-5)
+            scale= torch.clamp(encoding_stds @ alignments, min= 1e-3)
             )   # [Batch, Enc_d, Enc_t] @ [Batch, Enc_t, Feature_t] -> [Batch, Enc_d, Feature_t]
         
         linguistic_samples = self.linguistic_flow(
@@ -380,7 +380,7 @@ class Linguistic_Encoder(Feature_Encoder):
         self.hp = hyper_parameters
         
         super().__init__(
-            in_channels= 1024,  # WavLM channels,
+            in_channels= 512,
             out_channels= self.hp.Encoder.Size,
             wavenet_stack= self.hp.Linguistic_Encoder.WaveNet_Stack,
             conv_stack= self.hp.Linguistic_Encoder.Conv_Stack,
@@ -388,7 +388,13 @@ class Linguistic_Encoder(Feature_Encoder):
             dilation_rate= self.hp.Linguistic_Encoder.Dilation_Rate,
             dropout_rate= self.hp.Linguistic_Encoder.Dropout_Rate,
             )
-        self.wavlm = WavLMModel.from_pretrained("microsoft/wavlm-large")
+        
+        wav2vec2 = Wav2Vec2ForCTC.from_pretrained('facebook/wav2vec2-xls-r-2b')
+        wav2vec2.freeze_feature_encoder()
+        self.feature_extractor = wav2vec2.wav2vec2.feature_extractor
+        self.norm = LayerNorm(
+            num_features= 512
+            )
 
     def forward(
         self,
@@ -401,8 +407,12 @@ class Linguistic_Encoder(Feature_Encoder):
         '''
         with torch.no_grad():
             audios = torchaudio.functional.resample(audios, self.hp.Sound.Sample_Rate, 16000)
-            features = self.wavlm(audios).last_hidden_state
-            features = torchvision.transforms.functional.resize(features.unsqueeze(1), [lengths.max(), 1024]).squeeze(1).permute(0, 2, 1)
+            features = self.feature_extractor(audios)
+            features = torchvision.transforms.functional.resize(
+                features.unsqueeze(1),
+                [512, lengths.max()]
+                ).squeeze(1)
+        features = self.norm(features)
 
         return super().forward(
             features= features,
@@ -677,7 +687,7 @@ class LinearAttention(torch.nn.Module):
         x = self.prenet(x)  # [Batch, Calc_d * 3, Enc_t]        
         x = x.view(x.size(0), self.num_heads, x.size(1) // self.num_heads, x.size(2))    # [Batch, Head, Calc_d // Head * 3, Enc_t]
         queries, keys, values = x.chunk(chunks= 3, dim= 2)  # [Batch, Head, Calc_d // Head, Enc_t] * 3
-        keys = (keys + 1e-5).softmax(dim= 3)
+        keys = (keys + 1e-3).softmax(dim= 3)
 
         contexts = keys @ values.permute(0, 1, 3, 2)   # [Batch, Head, Calc_d // Head, Calc_d // Head]
         contexts = contexts.permute(0, 1, 3, 2) @ queries   # [Batch, Head, Calc_d // Head, Enc_t]

@@ -82,6 +82,11 @@ Decoder:
         Kernel_Size: 7
     LeakyRelu_Negative_Slope: 0.1
 
+Discriminator:
+    STFT:
+        N_FFT: [1024, 2048, 512]
+        Win_Size: [1024, 2048, 512]
+
 Token_Path: 'D:/Datasets/22K.LJ/Token.yaml'
 GE2E_Path: 'D:/Datasets/22K.LJ/GE2E.pickle'
 Spectrogram_Range_Info_Path: 'D:/Datasets/22K.LJ/Spectrogram_Range_Info.yaml'

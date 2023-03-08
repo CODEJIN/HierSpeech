@@ -20,6 +20,8 @@ Badlani, R., Łańcucki, A., Shih, K. J., Valle, R., Ping, W., & Catanzaro, B. (
     * Gaussian upsampler is applied.
     * The multi-head attention is changed to linearized attention in FFT Block.
         * By this change, positional encoding is removed.
+    * Discriminator
+        * According to the advice of [the authors](https://github.com/sh-lee-prml) of the paper, **scale discriminator** and **multi stft discriminator** were applied as discriminators.
     
 * I changed several hyper parameters and data type
     * One of mel or spectrogram is can be selected as a feature type.

@@ -9,18 +9,17 @@ from collections import defaultdict
 import matplotlib
 matplotlib.use('agg')
 import matplotlib.pyplot as plt
-from librosa import griffinlim
 from scipy.io import wavfile
 
 from Modules.Modules import HierSpeech, Mask_Generate
-from Modules.Discriminator import MultiPeriodDiscriminator as Discriminator, feature_loss, generator_loss, discriminator_loss
+from Modules.Discriminator import Discriminator, Feature_Map_Loss, Generator_Loss, Discriminator_Loss
 from Modules.Nvidia_Alignment_Leraning_Framework import AttentionBinarizationLoss, AttentionCTCLoss
 
 from Datasets import Dataset, Inference_Dataset, Collater, Inference_Collater
 from Noam_Scheduler import Noam_Scheduler
 from Logger import Logger
 
-from meldataset import mel_spectrogram, spectral_de_normalize_torch
+from meldataset import mel_spectrogram
 from distributed import init_distributed, apply_gradient_allreduce, reduce_tensor
 from Arg_Parser import Recursive_Parse, To_Non_Recursive_Dict
 
@@ -169,14 +168,17 @@ class Trainer:
     def Model_Generate(self):
         self.model_dict = {
             'HierSpeech': HierSpeech(self.hp).to(self.device),
-            'Discriminator': Discriminator().to(self.device),
+            'Discriminator': Discriminator(
+                stft_n_fft_list= self.hp.Discriminator.STFT.N_FFT,
+                stft_win_size_list= self.hp.Discriminator.STFT.Win_Size,
+                ).to(self.device),
             }
         self.criterion_dict = {
             'MSE': torch.nn.MSELoss(reduce= None).to(self.device),
             'MAE': torch.nn.L1Loss(reduce= None).to(self.device),
-            'Discriminator_Loss': discriminator_loss,
-            'Feature_Loss': feature_loss,
-            'Generator_Loss': generator_loss,
+            'Feature_Map': Feature_Map_Loss,
+            'Discriminator': Discriminator_Loss,
+            'Generator': Generator_Loss,
             'TokenCTC': torch.nn.CTCLoss(
                 blank= self.hp.Tokens,  # == Token length
                 zero_infinity=True
@@ -213,8 +215,8 @@ class Trainer:
 
         self.scaler = torch.cuda.amp.GradScaler(enabled= self.hp.Use_Mixed_Precision)
 
-        if self.gpu_id == 0:
-            logging.info(self.model_dict['HierSpeech'])
+        # if self.gpu_id == 0:
+        #     logging.info(self.model_dict['HierSpeech'])
 
     def Train_Step(self, tokens, token_lengths, features, feature_lengths, audios, linear_spectrograms, attention_priors):
         loss_dict = {}
@@ -240,13 +242,11 @@ class Trainer:
                 )
 
             if self.steps >= self.hp.Train.Discrimination_Step:
-                y_df_hat_r, y_df_hat_g, _, _ = self.model_dict['Discriminator'](
-                    y= audios_slice.unsqueeze(1),
-                    y_hat= audio_predictions_slice.detach().unsqueeze(1)
-                    )
+                discriminations_list_for_real, _ = self.model_dict['Discriminator'](audios_slice)
+                discriminations_list_for_fake, _ = self.model_dict['Discriminator'](audio_predictions_slice.detach())
         
         if self.steps >= self.hp.Train.Discrimination_Step:
-            loss_dict['Discrimination'], _, _ = self.criterion_dict['Discriminator_Loss'](y_df_hat_r, y_df_hat_g)
+            loss_dict['Discrimination'] = self.criterion_dict['Discriminator'](discriminations_list_for_real, discriminations_list_for_fake)
 
             self.optimizer_dict['Discriminator'].zero_grad()
             self.scaler.scale(loss_dict['Discrimination']).backward()
@@ -291,7 +291,7 @@ class Trainer:
             ).mean()
         loss_dict['Log_Duration'] = (self.criterion_dict['MSE'](
             log_duration_predictions,
-            (durations.float() + 1).log()
+            (durations.to(log_duration_predictions.dtype) + 1).log()
             ) * ~token_masks).mean()
         loss_dict['TokenCTC'] = self.criterion_dict['TokenCTC'](
                 log_probs= token_predictions.permute(2, 0, 1),  # [Feature_t, Batch, Token_n]
@@ -319,17 +319,17 @@ class Trainer:
         
         loss = \
             loss_dict['STFT'] + loss_dict['Log_Duration'] + loss_dict['TokenCTC'] + \
-            loss_dict['Enc_Linguistic_KLD'] + loss_dict['Linguistic_Acoustic_KLD'] + \
+            loss_dict['Encoding_KLD'] + loss_dict['Linguistic_KLD'] + loss_dict['Acoustic_KLD'] + \
             loss_dict['Attention_Binarization'] + loss_dict['Attention_CTC']
 
         if self.steps >= self.hp.Train.Discrimination_Step:
             with torch.cuda.amp.autocast(enabled= self.hp.Use_Mixed_Precision):
-                y_df_hat_r, y_df_hat_g, fmap_f_r, fmap_f_g = self.model_dict['Discriminator'](
-                    y= audios_slice.unsqueeze(1),
-                    y_hat= audio_predictions_slice.unsqueeze(1)
-                    )
+                discriminations_list_for_real, feature_maps_list_for_real = self.model_dict['Discriminator'](audios_slice)
+                discriminations_list_for_fake, feature_maps_list_for_fake = self.model_dict['Discriminator'](audio_predictions_slice)
 
-            loss_dict['Adversarial'] = self.criterion_dict['Feature_Loss'](fmap_f_r, fmap_f_g) + self.criterion_dict['Generator_Loss'](y_df_hat_g)[0]
+            loss_dict['Adversarial'] = \
+                self.criterion_dict['Feature_Map'](feature_maps_list_for_real, feature_maps_list_for_fake) + \
+                self.criterion_dict['Generator'](discriminations_list_for_fake)
             loss = loss + loss_dict['Adversarial']
             
         self.optimizer_dict['HierSpeech'].zero_grad()
@@ -447,7 +447,7 @@ class Trainer:
             ).mean()
         loss_dict['Log_Duration'] = (self.criterion_dict['MSE'](
             log_duration_predictions,
-            (durations.float() + 1).log()
+            (durations.to(log_duration_predictions.dtype) + 1).log()
             ) * ~token_masks).mean()
         loss_dict['TokenCTC'] = self.criterion_dict['TokenCTC'](
                 log_probs= token_predictions.permute(2, 0, 1),  # [Feature_t, Batch, Token_n]
@@ -474,13 +474,14 @@ class Trainer:
         loss_dict['Attention_CTC'] = self.criterion_dict['Attention_CTC'](attention_logprobs, token_lengths, feature_lengths)
         
         if self.steps >= self.hp.Train.Discrimination_Step:
-            y_df_hat_r, y_df_hat_g, fmap_f_r, fmap_f_g = self.model_dict['Discriminator'](
-                y= audios_slice.unsqueeze(1),
-                y_hat= audio_predictions_slice.detach().unsqueeze(1)
-                )
-            loss_dict['Discrimination'], _, _ = self.criterion_dict['Discriminator_Loss'](y_df_hat_r, y_df_hat_g)
-            loss_dict['Adversarial'] = self.criterion_dict['Feature_Loss'](fmap_f_r, fmap_f_g) + self.criterion_dict['Generator_Loss'](y_df_hat_g)[0]
+            discriminations_list_for_real, feature_maps_list_for_real = self.model_dict['Discriminator'](audios_slice)
+            discriminations_list_for_fake, feature_maps_list_for_fake = self.model_dict['Discriminator'](audio_predictions_slice)
 
+            loss_dict['Discrimination'] = self.criterion_dict['Discriminator'](discriminations_list_for_real, discriminations_list_for_fake)
+            loss_dict['Adversarial'] = \
+                self.criterion_dict['Feature_Map'](feature_maps_list_for_real, feature_maps_list_for_fake) + \
+                self.criterion_dict['Generator'](discriminations_list_for_fake)
+            
         for tag, loss in loss_dict.items():
             loss = reduce_tensor(loss.data, self.num_gpus).item() if self.num_gpus > 1 else loss.item()
             self.scalar_dict['Evaluation']['Loss/{}'.format(tag)] += loss
@@ -518,26 +519,55 @@ class Trainer:
             index = np.random.randint(0, tokens.size(0))
 
             with torch.inference_mode():
-                audio_predictions, *_, duration_predictions, _, _, _ = self.model_dict['HierSpeech'](
+                prediction_audios, *_, duration_predictions, _, _, _ = self.model_dict['HierSpeech'](
                     tokens= tokens[index].unsqueeze(0).to(self.device),
                     token_lengths= token_lengths[index].unsqueeze(0).to(self.device)
                     )
-                audio_predictions = audio_predictions.clamp(-1.0, 1.0)
+                prediction_audios = prediction_audios.clamp(-1.0, 1.0)
             
-            target_length = feature_lengths[index] * self.hp.Sound.Frame_Shift
-            inference_length = int(duration_predictions[0, :token_lengths[index] - 1].sum()) * self.hp.Sound.Frame_Shift
-            audio_target = audios[index, :target_length].cpu().numpy()
-            audio_prediction = audio_predictions[0, :inference_length].cpu().numpy()
+            target_feature_length = feature_lengths[index]
+            prediction_feature_length = int(duration_predictions[0, :token_lengths[index] - 1].sum()) * self.hp.Sound.Frame_Shift
+            target_audio_length = target_feature_length * self.hp.Sound.Frame_Shift
+            prediction_audio_length = prediction_feature_length * self.hp.Sound.Frame_Shift
+
+            target_audio = audios[index, :target_audio_length]
+            prediction_audio = prediction_audios[0, :prediction_audio_length]
+
+            target_feature = mel_spectrogram(
+                target_audio.unsqueeze(0),
+                n_fft= self.hp.Sound.N_FFT,
+                num_mels= self.hp.Sound.Mel_Dim,
+                sampling_rate= self.hp.Sound.Sample_Rate,
+                hop_size= self.hp.Sound.Frame_Shift,
+                win_size= self.hp.Sound.Frame_Length,
+                fmin= self.hp.Sound.Mel_F_Min,
+                fmax= self.hp.Sound.Mel_F_Max
+                ).squeeze(0).cpu().numpy()
+            prediction_feature = mel_spectrogram(
+                prediction_audio.unsqueeze(0),
+                n_fft= self.hp.Sound.N_FFT,
+                num_mels= self.hp.Sound.Mel_Dim,
+                sampling_rate= self.hp.Sound.Sample_Rate,
+                hop_size= self.hp.Sound.Frame_Shift,
+                win_size= self.hp.Sound.Frame_Length,
+                fmin= self.hp.Sound.Mel_F_Min,
+                fmax= self.hp.Sound.Mel_F_Max
+                ).squeeze(0).cpu().numpy()
+            
+            target_audio = target_audio.cpu().numpy()
+            prediction_audio = prediction_audio.cpu().numpy()
 
             duration_prediction = duration_predictions[0, :token_lengths[index]]
             duration_prediction = torch.arange(duration_prediction.size(0)).repeat_interleave(duration_prediction.cpu()).numpy()
             
             image_dict = {
+                'Feature/Target': (target_feature, None, 'auto', None, None, None),
+                'Feature/Prediction': (prediction_feature, None, 'auto', None, None, None),
                 'Duration/Prediction': (duration_prediction[:feature_lengths[index]], None, 'auto', (0, features.size(2)), (0, tokens.size(1)), None),
                 }
             audio_dict = {
-                'Audio/Target': (audio_target, self.hp.Sound.Sample_Rate),
-                'Audio/Linear': (audio_prediction, self.hp.Sound.Sample_Rate),
+                'Audio/Target': (target_audio, self.hp.Sound.Sample_Rate),
+                'Audio/Linear': (prediction_audio, self.hp.Sound.Sample_Rate),
                 }
 
             self.writer_dict['Evaluation'].add_image_dict(image_dict, self.steps)
@@ -554,6 +584,8 @@ class Trainer:
                     )
                 wandb.log(
                     data= {
+                        'Evaluation.Feature.Target': wandb.Image(target_feature),
+                        'Evaluation.Feature.Prediction': wandb.Image(prediction_feature),
                         'Evaluation.Duration': wandb.plot.line_series(
                             xs= np.arange(feature_lengths[index].cpu().numpy()),
                             ys= [
@@ -564,12 +596,12 @@ class Trainer:
                             xname= 'Feature_t'
                             ),
                         'Evaluation.Audio.Target': wandb.Audio(
-                            audio_target,
+                            target_audio,
                             sample_rate= self.hp.Sound.Sample_Rate,
                             caption= 'Target_Audio'
                             ),
                         'Evaluation.Audio.Linear': wandb.Audio(
-                            audio_prediction,
+                            prediction_audio,
                             sample_rate= self.hp.Sound.Sample_Rate,
                             caption= 'Linear_Audio'
                             ),

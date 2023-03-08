@@ -201,7 +201,7 @@ class Collater:
         feature_lengths = torch.LongTensor(feature_lengths)   # [Batch]        
         audios = torch.FloatTensor(audios)    # [Batch, Audio_t], Audio_t == Feature_t * hop_size
         linear_spectrograms = torch.FloatTensor(linear_spectrograms).permute(0, 2, 1)   # [Batch, Spectrogram_d, Feature_t]
-        attention_priors = torch.LongTensor(attention_priors) # [Batch, Token_t, Feature_t]
+        attention_priors = torch.FloatTensor(attention_priors) # [Batch, Token_t, Feature_t]
 
         return tokens, token_lengths, features, feature_lengths, audios, linear_spectrograms, attention_priors
 
