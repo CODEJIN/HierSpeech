@@ -112,7 +112,7 @@ class HierSpeech(torch.nn.Module):
 
         encoding_distributions_prior = torch.distributions.Normal(
             loc= encoding_means @ alignments,
-            scale= torch.clamp(encoding_stds @ alignments, min= 1e-5)
+            scale= torch.clamp(encoding_stds @ alignments, min= 1e-3)
             )   # [Batch, Enc_d, Enc_t] @ [Batch, Enc_t, Feature_t] -> [Batch, Enc_d, Feature_t]
 
         linguistic_distributions_prior = self.linguistic_encoder(

@@ -635,6 +635,18 @@ class Trainer:
             for length in feature_lengths
             ]
 
+        feature_predictions = mel_spectrogram(
+            audio_predictions,
+            n_fft= self.hp.Sound.N_FFT,
+            num_mels= self.hp.Sound.Mel_Dim,
+            sampling_rate= self.hp.Sound.Sample_Rate,
+            hop_size= self.hp.Sound.Frame_Shift,
+            win_size= self.hp.Sound.Frame_Length,
+            fmin= self.hp.Sound.Mel_F_Min,
+            fmax= self.hp.Sound.Mel_F_Max
+            ).cpu().numpy()
+        audio_predictions = audio_predictions.cpu().numpy()
+
         files = []
         for index in range(tokens.size(0)):
             tags = []
@@ -650,6 +662,7 @@ class Trainer:
         os.makedirs(os.path.join(self.hp.Inference_Path, 'Step-{}'.format(self.steps), 'PNG').replace('\\', '/'), exist_ok= True)
         os.makedirs(os.path.join(self.hp.Inference_Path, 'Step-{}'.format(self.steps), 'WAV').replace('\\', '/'), exist_ok= True)
         for index, (
+            feature,
             audio,
             duration,
             feature_length,
@@ -658,7 +671,8 @@ class Trainer:
             pronunciation,
             file
             ) in enumerate(zip(
-            audio_predictions.cpu().numpy(),
+            feature_predictions,
+            audio_predictions,
             durations,
             feature_lengths,
             audio_lengths,
@@ -669,9 +683,9 @@ class Trainer:
             title = 'Text: {}'.format(text if len(text) < 90 else text[:90] + '…')
             new_figure = plt.figure(figsize=(20, 5 * 5), dpi=100)
             ax = plt.subplot2grid((3, 1), (0, 0))
-            plt.plot(audio[:audio_length])
-            plt.title('Prediction    {}'.format(title))
-            plt.margins(x= 0)
+            plt.imshow(feature[:, :feature_length], aspect='auto', origin='lower')
+            plt.title(f'Prediction  {title}')
+            plt.colorbar(ax= ax)
             ax = plt.subplot2grid((3, 1), (1, 0), rowspan= 2)
             plt.plot(duration[:feature_length])
             plt.title('Duration    {}'.format(title))
@@ -688,7 +702,7 @@ class Trainer:
             wavfile.write(
                 os.path.join(self.hp.Inference_Path, 'Step-{}'.format(self.steps), 'WAV', '{}.wav'.format(file)).replace('\\', '/'),
                 self.hp.Sound.Sample_Rate,
-                audio
+                audio[:audio_length]
                 )
             
     def Inference_Epoch(self):
