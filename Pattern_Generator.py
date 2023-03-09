@@ -7,6 +7,10 @@ from tqdm import tqdm
 import hgtk
 import logging
 from pysptk.sptk import rapt
+from typing import List, Tuple, Union
+
+from phonemizer import phonemize
+from phonemizer.separator import Separator
 
 from meldataset import mel_spectrogram, spectrogram, spec_energy
 
@@ -38,18 +42,54 @@ def Text_Filtering(text):
     else:
         return regex_Checker.findall(text)[0]
 
-def Decompose(text):
-    decomposed = []
-    for letter in text:
-        if not hgtk.checker.is_hangul(letter):
-            decomposed.append(letter)
-            continue
+def Phonemize(text: Union[str, List[str]], language: str):
+    if language == 'English':
+        language = 'en-us'
+    elif language == 'Korean':
+        language = 'ko'
 
-        onset, nucleus, coda = hgtk.letter.decompose(letter)
-        coda += '_'
-        decomposed.extend([onset, nucleus, coda])
+    if type(text) == str:
+        text = [text]
 
-    return decomposed
+    pronunciations = phonemize(
+        text,
+        language= language,
+        backend='espeak',
+        separator=Separator(phone= ' ', word='|', syllable= None),
+        strip=True,
+        preserve_punctuation=True,
+        njobs=4
+        )
+    
+    parsed_pronunciations = []
+    for phoneme_string in pronunciations:
+        pronunciation = []
+        for word in phoneme_string.split('|'):
+            for phoneme in word.split(' '):
+                if len(phoneme) == 0:
+                    continue
+                sub_phoneme = []
+                for x in phoneme:
+                    if not x in ['?', '!', '.', ',']:
+                        sub_phoneme.append(x)
+                    else:
+                        if len(sub_phoneme) > 0:
+                            pronunciation.append(''.join(sub_phoneme))
+                        pronunciation.append(x)
+                        sub_phoneme = []
+                if len(sub_phoneme) > 0:
+                    pronunciation.append(''.join(sub_phoneme))
+            pronunciation.append(' ')
+        pronunciation.pop()
+
+        if '' in pronunciation:
+            print(phoneme_string)
+            print(pronunciation)
+            assert False
+
+        parsed_pronunciations.append(pronunciation)
+
+    return parsed_pronunciations
 
 def Pattern_Generate(
     path,
@@ -116,7 +156,7 @@ def Pattern_Generate(
 
     return audio, spect, mel, log_f0, log_energy
 
-def Pattern_File_Generate(path, speaker, emotion, language, gender, dataset, text, decomposed, tag='', eval= False):
+def Pattern_File_Generate(path, speaker, emotion, language, gender, dataset, text, pronunciation, tag='', eval= False):
     pattern_path = hp.Train.Eval_Pattern.Path if eval else hp.Train.Train_Pattern.Path
 
     file = '{}.{}{}.PICKLE'.format(
@@ -167,7 +207,7 @@ def Pattern_File_Generate(path, speaker, emotion, language, gender, dataset, tex
         'Gender': gender,
         'Dataset': dataset,
         'Text': text,
-        'Decomposed': decomposed
+        'Pronunciation': pronunciation
         }
 
     os.makedirs(os.path.join(pattern_path, dataset, speaker).replace('\\', '/'), exist_ok= True)
@@ -196,27 +236,22 @@ def Emotion_Info_Load(path):
             paths.append(file)
 
     text_dict = {}
-    decomposed_dict = {}
+    
     for wav_path in paths:
         text = open(wav_path.replace('/wav/', '/transcript/').replace('.wav', '.txt'), 'r', encoding= 'utf-8-sig').readlines()[0].strip()
         text = Text_Filtering(text)
         if text is None:
             continue
 
-        decomposed = []
-        for letter in text:
-            if not hgtk.checker.is_hangul(letter):
-                decomposed.append(letter)
-                continue
-
-            onset, nucleus, coda = hgtk.letter.decompose(letter)
-            coda += '_'
-            decomposed.extend([onset, nucleus, coda])
-
         text_dict[wav_path] = text
-        decomposed_dict[wav_path] = decomposed
 
     paths = list(text_dict.keys())
+
+    pronunciations = Phonemize(
+        text= [text_dict[path] for path in paths],
+        language= 'Korean'
+        )    
+    pronunciation_dict = {path: pronunciation for path, pronunciation in zip(paths, pronunciations)}
 
     speaker_dict = {
         path: path.split('/')[-3].strip().upper()
@@ -276,33 +311,29 @@ def Emotion_Info_Load(path):
         }
 
     print('Emotion info generated: {}'.format(len(paths)))
-    return paths, text_dict, decomposed_dict, speaker_dict, emotion_dict, language_dict, gender_dict
+    return paths, text_dict, pronunciation_dict, speaker_dict, emotion_dict, language_dict, gender_dict
 
 def KSS_Info_Load(path):
     '''
     all neutral
     '''
-    paths, text_dict, decomposed_dict = [], {}, {}
+    paths, text_dict = [], {}
     for line in open(os.path.join(path, 'transcript.v.1.4.txt').replace('\\', '/'), 'r', encoding= 'utf-8-sig').readlines():
         line = line.strip().split('|')
         file, text = line[0].strip(), line[2].strip()
         text = Text_Filtering(text)
         if text is None:
             continue
-        decomposed = []
-        for letter in text:
-            if not hgtk.checker.is_hangul(letter):
-                decomposed.append(letter)
-                continue
-
-            onset, nucleus, coda = hgtk.letter.decompose(letter)
-            coda += '_'
-            decomposed.extend([onset, nucleus, coda])
-
+        
         file = os.path.join(path, 'kss', file).replace('\\', '/')
         paths.append(file)
         text_dict[file] = text
-        decomposed_dict[file] = decomposed
+
+    pronunciations = Phonemize(
+        text= [text_dict[path] for path in paths],
+        language= 'Korean'
+        )    
+    pronunciation_dict = {path: pronunciation for path, pronunciation in zip(paths, pronunciations)}
 
     speaker_dict = {
         path: 'KSS'
@@ -321,9 +352,8 @@ def KSS_Info_Load(path):
         for path in paths
         }
 
-
     print('KSS info generated: {}'.format(len(paths)))
-    return paths, text_dict, decomposed_dict, speaker_dict, emotion_dict, language_dict, gender_dict
+    return paths, text_dict, pronunciation_dict, speaker_dict, emotion_dict, language_dict, gender_dict
 
 def AIHub_Info_Load(path):
     emotion_label_dict = {
@@ -349,17 +379,6 @@ def AIHub_Info_Load(path):
                     continue
 
                 info_dict[key]['Text'] = text
-                decomposed = []
-                for letter in text:
-                    if not hgtk.checker.is_hangul(letter):
-                        decomposed.append(letter)
-                        continue
-
-                    onset, nucleus, coda = hgtk.letter.decompose(letter)
-                    coda += '_'
-                    decomposed.extend([onset, nucleus, coda])
-                
-                info_dict[key]['Decomposed'] = decomposed
                 info_dict[key]['Speaker'] = 'AIHub_{}'.format(pattern_info['화자정보']['SpeakerName'])
                 info_dict[key]['Gender'] = pattern_info['화자정보']['Gender']
                 info_dict[key]['Emotion'] = emotion_label_dict[pattern_info['화자정보']['Emotion']]
@@ -373,9 +392,12 @@ def AIHub_Info_Load(path):
     text_dict = {
         info['Path']: info['Text']  for info in info_dict.values()
         }
-    decomposed_dict = {
-        info['Path']: info['Decomposed']  for info in info_dict.values()
-        }
+    pronunciations = Phonemize(
+        text= [text_dict[path] for path in paths],
+        language= 'Korean'
+        )    
+    pronunciation_dict = {path: pronunciation for path, pronunciation in zip(paths, pronunciations)}
+
     speaker_dict = {
         info['Path']: info['Speaker']  for info in info_dict.values()
         }
@@ -391,7 +413,7 @@ def AIHub_Info_Load(path):
         }
 
     print('AIHub info generated: {}'.format(len(paths)))
-    return paths, text_dict, decomposed_dict, speaker_dict, emotion_dict, language_dict, gender_dict
+    return paths, text_dict, pronunciation_dict, speaker_dict, emotion_dict, language_dict, gender_dict
 
 def Basic_Info_Load(path, dataset_label, language= None, gender= None):
     paths = []
@@ -403,7 +425,6 @@ def Basic_Info_Load(path, dataset_label, language= None, gender= None):
             paths.append(file)
     
     text_dict = {}
-    decomposed_dict = {}
     speaker_dict = {}
     emotion_dict = {}
 
@@ -413,9 +434,7 @@ def Basic_Info_Load(path, dataset_label, language= None, gender= None):
         if text is None:
             continue
         
-        decomposed = Decompose(text)
         text_dict[os.path.join(path, file).replace('\\', '/')] = text
-        decomposed_dict[os.path.join(path, file).replace('\\', '/')] = decomposed
         speaker_dict[os.path.join(path, file).replace('\\', '/')] = speaker.strip()
         emotion_dict[os.path.join(path, file).replace('\\', '/')] = emotion.strip()
 
@@ -439,9 +458,20 @@ def Basic_Info_Load(path, dataset_label, language= None, gender= None):
             for path, speaker in speaker_dict.items()
             }
 
+    pronunciation_dict = {}
+    for language in set(language_dict.values()):
+        language_paths = [path for path in paths if language_dict[path] == language]
+        language_pronunciations = Phonemize(
+            text= [text_dict[path] for path in language_paths],
+            language= language
+            )
+        pronunciation_dict.update({
+            path: pronunciation
+            for path, pronunciation in zip(language_paths, language_pronunciations)
+            })
 
     print('{} info generated: {}'.format(dataset_label, len(paths)))
-    return paths, text_dict, decomposed_dict, speaker_dict, emotion_dict, language_dict, gender_dict
+    return paths, text_dict, pronunciation_dict, speaker_dict, emotion_dict, language_dict, gender_dict
 
 
 def VCTK_Info_Load(path):
@@ -460,7 +490,6 @@ def VCTK_Info_Load(path):
             paths.append(file)
 
     text_dict = {}
-    decomposed_dict = {}
     for path in paths:
         if 'p315'.upper() in path.upper():  #Officially, 'p315' text is lost in VCTK dataset.
             continue
@@ -469,11 +498,14 @@ def VCTK_Info_Load(path):
             continue
         text = text.upper()
         
-        decomposed = Decompose(text)
         text_dict[path] = text
-        decomposed_dict[path] = decomposed
             
     paths = list(text_dict.keys())
+    pronunciations = Phonemize(
+        text= [text_dict[path] for path in paths],
+        language= 'English'
+        )    
+    pronunciation_dict = {path: pronunciation for path, pronunciation in zip(paths, pronunciations)}
 
     speaker_dict = {
         path: 'VCTK.{}'.format(path.split('/')[-2].strip().upper())
@@ -601,7 +633,7 @@ def VCTK_Info_Load(path):
 
     print('VCTK info generated: {}'.format(len(paths)))
 
-    return paths, text_dict, decomposed_dict, speaker_dict, emotion_dict, language_dict, gender_dict
+    return paths, text_dict, pronunciation_dict, speaker_dict, emotion_dict, language_dict, gender_dict
 
 def Libri_Info_Load(path):
     gender_path = os.path.join(path, 'Gender.txt').replace('\\', '/')
@@ -615,18 +647,20 @@ def Libri_Info_Load(path):
             paths.append(file)
 
     text_dict = {}
-    decomposed_dict = {}
     for path in paths:
         text = Text_Filtering(open('{}.normalized.txt'.format(os.path.splitext(path)[0]), 'r', encoding= 'utf-8-sig').readlines()[0])
         if text is None:
             continue
         text = text.upper()
         
-        decomposed = Decompose(text)
         text_dict[path] = text
-        decomposed_dict[path] = decomposed
 
     paths = list(text_dict.keys())
+    pronunciations = Phonemize(
+        text= [text_dict[path] for path in paths],
+        language= 'English'
+        )    
+    pronunciation_dict = {path: pronunciation for path, pronunciation in zip(paths, pronunciations)}
 
     speaker_dict = {
         path: 'Libri.{:04d}'.format(int(path.split('/')[-3].strip().upper()))
@@ -645,7 +679,7 @@ def Libri_Info_Load(path):
         }
 
     print('Libri info generated: {}'.format(len(paths)))
-    return paths, text_dict, decomposed_dict, speaker_dict, emotion_dict, language_dict, gender_dict
+    return paths, text_dict, pronunciation_dict, speaker_dict, emotion_dict, language_dict, gender_dict
 
 def LJ_Info_Load(path):
     paths = []
@@ -657,21 +691,24 @@ def LJ_Info_Load(path):
             paths.append(file)
 
     text_dict = {}
-    decomposed_dict = {}
     for line in open(os.path.join(path, 'metadata.csv').replace('\\', '/'), 'r', encoding= 'utf-8-sig').readlines():
         line = line.strip().split('|')        
         text = Text_Filtering(line[2].strip())
         if text is None:
             continue
         text = text.upper()
-        decomposed = Decompose(text)
         wav_path = os.path.join(path, 'wavs', '{}.wav'.format(line[0]))
         
         text_dict[wav_path] = text
-        decomposed_dict[wav_path] = decomposed
 
     paths = list(text_dict.keys())
 
+    pronunciations = Phonemize(
+        text= [text_dict[path] for path in paths],
+        language= 'English'
+        )    
+    pronunciation_dict = {path: pronunciation for path, pronunciation in zip(paths, pronunciations)}
+    
     speaker_dict = {
         path: 'LJ'
         for path in paths
@@ -681,7 +718,7 @@ def LJ_Info_Load(path):
     gender_dict = {path: 'Female' for path in paths}
 
     print('LJ info generated: {}'.format(len(paths)))
-    return paths, text_dict, decomposed_dict, speaker_dict, emotion_dict, language_dict, gender_dict
+    return paths, text_dict, pronunciation_dict, speaker_dict, emotion_dict, language_dict, gender_dict
 
 
 def Split_Eval(paths, eval_ratio= 0.001, min_Eval= 1):
@@ -738,7 +775,7 @@ def Metadata_Generate(eval= False):
             try:
                 if not all([
                     key in pattern_dict.keys()
-                    for key in ('Audio', 'Spectrogram', 'Mel', 'Log_F0', 'Log_Energy', 'GE2E', 'Speaker', 'Emotion', 'Language', 'Gender', 'Dataset', 'Text', 'Decomposed')
+                    for key in ('Audio', 'Spectrogram', 'Mel', 'Log_F0', 'Log_Energy', 'GE2E', 'Speaker', 'Emotion', 'Language', 'Gender', 'Dataset', 'Text', 'Pronunciation')
                     ]):
                     continue
                 new_metadata_dict['Audio_Length_Dict'][file] = pattern_dict['Audio'].shape[0]
@@ -876,18 +913,12 @@ def Metadata_Generate(eval= False):
 
     print('Metadata generate done.')
 
-def Token_dict_Generate():
-    tokens = \
-        ['<S>', '<E>', '<P>'] + \
-        list(hgtk.letter.CHO) + \
-        list(hgtk.letter.JOONG) + \
-        ['{}_'.format(x) for x in hgtk.letter.JONG] + \
-        [chr(x) for x in range(ord('A'), ord('Z') + 1)] + \
-        [',', '.', '?', '!', '\'', '-', ' ']
+def Token_dict_Generate(tokens):
+    tokens = ['<S>', '<E>', '<P>'] + sorted(list(tokens))        
     token_dict = {token: index for index, token in enumerate(tokens)}
     
     os.makedirs(os.path.dirname(hp.Token_Path), exist_ok= True)    
-    yaml.dump(token_dict, open(hp.Token_Path, 'w'))
+    yaml.dump(token_dict, open(hp.Token_Path, 'w', encoding='utf-8-sig'))
 
     return token_dict
 
@@ -916,7 +947,7 @@ if __name__ == '__main__':
 
     train_paths, eval_paths = [], []
     text_dict = {}
-    decomposed_dict = {}
+    pronunciation_dict = {}
     speaker_dict = {}
     emotion_dict = {}
     language_dict = {}
@@ -925,12 +956,12 @@ if __name__ == '__main__':
     tag_dict = {}
 
     if not args.emotion_path is None:
-        emotion_paths, emotion_text_dict, emotion_decomposed_dict, emotion_speaker_dict, emotion_emotion_dict, emotion_language_dict, emotion_gender_dict = Emotion_Info_Load(path= args.emotion_path)
+        emotion_paths, emotion_text_dict, emotion_pronunciation_dict, emotion_speaker_dict, emotion_emotion_dict, emotion_language_dict, emotion_gender_dict = Emotion_Info_Load(path= args.emotion_path)
         emotion_paths = Split_Eval(emotion_paths, args.eval_ratio, args.eval_min)
         train_paths.extend(emotion_paths[0])
         eval_paths.extend(emotion_paths[1])
         text_dict.update(emotion_text_dict)
-        decomposed_dict.update(emotion_decomposed_dict)
+        pronunciation_dict.update(emotion_pronunciation_dict)
         speaker_dict.update(emotion_speaker_dict)
         emotion_dict.update(emotion_emotion_dict)
         language_dict.update(emotion_language_dict)
@@ -939,12 +970,12 @@ if __name__ == '__main__':
         tag_dict.update({path: '' for paths in emotion_paths for path in paths})
 
     if not args.kss_path is None:
-        kss_paths, kss_text_dict, kss_decomposed_dict, kss_speaker_dict, kss_emotion_dict, kss_language_dict, kss_gender_dict = KSS_Info_Load(path= args.kss_path)
+        kss_paths, kss_text_dict, kss_pronunciation_dict, kss_speaker_dict, kss_emotion_dict, kss_language_dict, kss_gender_dict = KSS_Info_Load(path= args.kss_path)
         kss_paths = Split_Eval(kss_paths, args.eval_ratio, args.eval_min)
         train_paths.extend(kss_paths[0])
         eval_paths.extend(kss_paths[1])
         text_dict.update(kss_text_dict)
-        decomposed_dict.update(kss_decomposed_dict)
+        pronunciation_dict.update(kss_pronunciation_dict)
         speaker_dict.update(kss_speaker_dict)
         emotion_dict.update(kss_emotion_dict)
         language_dict.update(kss_language_dict)
@@ -953,14 +984,14 @@ if __name__ == '__main__':
         tag_dict.update({path: '' for paths in kss_paths for path in paths})
 
     if not args.aihub_path is None:
-        aihub_paths, aihub_text_dict, aihub_decomposed_dict, aihub_speaker_dict, aihub_emotion_dict, aihub_language_dict, aihub_gender_dict = AIHub_Info_Load(
+        aihub_paths, aihub_text_dict, aihub_pronunciation_dict, aihub_speaker_dict, aihub_emotion_dict, aihub_language_dict, aihub_gender_dict = AIHub_Info_Load(
             path= args.aihub_path
             )
         aihub_paths = Split_Eval(aihub_paths, args.eval_ratio, args.eval_min)
         train_paths.extend(aihub_paths[0])
         eval_paths.extend(aihub_paths[1])
         text_dict.update(aihub_text_dict)
-        decomposed_dict.update(aihub_decomposed_dict)
+        pronunciation_dict.update(aihub_pronunciation_dict)
         speaker_dict.update(aihub_speaker_dict)
         emotion_dict.update(aihub_emotion_dict)
         language_dict.update(aihub_language_dict)
@@ -971,12 +1002,12 @@ if __name__ == '__main__':
 
 
     if not args.vctk_path is None:
-        vctk_paths, vctk_text_dict, vctk_decomposed_dict, vctk_speaker_dict, vctk_emotion_dict, vctk_language_dict, vctk_gender_dict = VCTK_Info_Load(path= args.vctk_path)
+        vctk_paths, vctk_text_dict, vctk_pronunciation_dict, vctk_speaker_dict, vctk_emotion_dict, vctk_language_dict, vctk_gender_dict = VCTK_Info_Load(path= args.vctk_path)
         vctk_paths = Split_Eval(vctk_paths, args.eval_ratio, args.eval_min)
         train_paths.extend(vctk_paths[0])
         eval_paths.extend(vctk_paths[1])
         text_dict.update(vctk_text_dict)
-        decomposed_dict.update(vctk_decomposed_dict)
+        pronunciation_dict.update(vctk_pronunciation_dict)
         speaker_dict.update(vctk_speaker_dict)
         emotion_dict.update(vctk_emotion_dict)
         language_dict.update(vctk_language_dict)
@@ -985,12 +1016,12 @@ if __name__ == '__main__':
         tag_dict.update({path: '' for paths in vctk_paths for path in paths})
 
     if not args.libri_path is None:
-        libri_paths, libri_text_dict, libri_decomposed_dict, libri_speaker_dict, libri_emotion_dict, libri_language_dict, libri_gender_dict = Libri_Info_Load(path= args.libri_path)
+        libri_paths, libri_text_dict, libri_pronunciation_dict, libri_speaker_dict, libri_emotion_dict, libri_language_dict, libri_gender_dict = Libri_Info_Load(path= args.libri_path)
         libri_paths = Split_Eval(libri_paths, args.eval_ratio, args.eval_min)
         train_paths.extend(libri_paths[0])
         eval_paths.extend(libri_paths[1])
         text_dict.update(libri_text_dict)
-        decomposed_dict.update(libri_decomposed_dict)
+        pronunciation_dict.update(libri_pronunciation_dict)
         speaker_dict.update(libri_speaker_dict)
         emotion_dict.update(libri_emotion_dict)
         language_dict.update(libri_language_dict)
@@ -999,12 +1030,12 @@ if __name__ == '__main__':
         tag_dict.update({path: '' for paths in libri_paths for path in paths})
 
     if not args.lj_path is None:
-        lj_paths, lj_text_dict, lj_decomposed_dict, lj_speaker_dict, lj_emotion_dict, lj_language_dict, lj_gender_dict = LJ_Info_Load(path= args.lj_path)
+        lj_paths, lj_text_dict, lj_pronunciation_dict, lj_speaker_dict, lj_emotion_dict, lj_language_dict, lj_gender_dict = LJ_Info_Load(path= args.lj_path)
         lj_paths = Split_Eval(lj_paths, args.eval_ratio, args.eval_min)
         train_paths.extend(lj_paths[0])
         eval_paths.extend(lj_paths[1])
         text_dict.update(lj_text_dict)
-        decomposed_dict.update(lj_decomposed_dict)
+        pronunciation_dict.update(lj_pronunciation_dict)
         speaker_dict.update(lj_speaker_dict)
         emotion_dict.update(lj_emotion_dict)
         language_dict.update(lj_language_dict)
@@ -1015,7 +1046,12 @@ if __name__ == '__main__':
     # if len(train_paths) == 0 or len(eval_paths) == 0:
     #     raise ValueError('Total info count must be bigger than 0.')
 
-    token_dict = Token_dict_Generate()
+    tokens = set([
+        token
+        for phonemes in pronunciation_dict.values()
+        for token in phonemes
+        ])
+    token_dict = Token_dict_Generate(tokens= tokens)
 
     with PE(max_workers = args.max_worker) as pe:
         for _ in tqdm(
@@ -1030,7 +1066,7 @@ if __name__ == '__main__':
                         gender_dict[path],
                         dataset_dict[path],
                         text_dict[path],
-                        decomposed_dict[path],
+                        pronunciation_dict[path],
                         tag_dict[path],
                         False
                         )
@@ -1052,7 +1088,7 @@ if __name__ == '__main__':
                         gender_dict[path],
                         dataset_dict[path],
                         text_dict[path],
-                        decomposed_dict[path],
+                        pronunciation_dict[path],
                         tag_dict[path],
                         True
                         )
