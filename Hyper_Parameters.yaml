@@ -16,6 +16,10 @@ Tokens: 104
 
 Encoder:
     Size: 192
+    Conv:
+        Stack: 3
+        Kernel_Size: 5
+        Dropout_Rate: 0.5
     Transformer:
         Stack: 4
         Head: 2
