@@ -83,7 +83,7 @@ class Trainer:
                 wandb.watch(self.model_dict['HierSpeech'])
 
     def Dataset_Generate(self):
-        token_dict = yaml.load(open(self.hp.Token_Path), Loader=yaml.Loader)
+        token_dict = yaml.load(open(self.hp.Token_Path, 'r', encoding= 'utf-8-sig'), Loader=yaml.Loader)
         if self.hp.Feature_Type == 'Spectrogram':
             self.feature_range_info_dict = yaml.load(open(self.hp.Spectrogram_Range_Info_Path), Loader=yaml.Loader)
         if self.hp.Feature_Type == 'Mel':
@@ -616,7 +616,7 @@ class Trainer:
             model.train()
 
     @torch.inference_mode()
-    def Inference_Step(self, tokens, token_lengths, texts, decomposed_texts, start_index= 0, tag_step= False):
+    def Inference_Step(self, tokens, token_lengths, texts, pronunciations, start_index= 0, tag_step= False):
         tokens = tokens.to(self.device, non_blocking=True)
         token_lengths = token_lengths.to(self.device, non_blocking=True)
 
@@ -655,7 +655,7 @@ class Trainer:
             feature_length,
             audio_length,
             text,
-            decomposed_text,
+            pronunciation,
             file
             ) in enumerate(zip(
             audio_predictions.cpu().numpy(),
@@ -663,7 +663,7 @@ class Trainer:
             feature_lengths,
             audio_lengths,
             texts,
-            decomposed_texts,
+            pronunciations,
             files
             )):
             title = 'Text: {}'.format(text if len(text) < 90 else text[:90] + '…')
@@ -677,8 +677,8 @@ class Trainer:
             plt.title('Duration    {}'.format(title))
             plt.margins(x= 0)
             plt.yticks(
-                range(len(decomposed_text) + 2),
-                ['<S>'] + list(decomposed_text) + ['<E>'],
+                range(len(pronunciation) + 2),
+                ['<S>'] + list(pronunciation) + ['<E>'],
                 fontsize = 10
                 )
             plt.tight_layout()
@@ -701,12 +701,12 @@ class Trainer:
             model.eval()
 
         batch_size = self.hp.Inference_Batch_Size or self.hp.Train.Batch_Size
-        for step, (tokens, token_lengths, texts, decomposed_texts) in tqdm(
+        for step, (tokens, token_lengths, texts, pronunciations) in tqdm(
             enumerate(self.dataloader_dict['Inference']),
             desc='[Inference]',
             total= math.ceil(len(self.dataloader_dict['Inference'].dataset) / batch_size)
             ):
-            self.Inference_Step(tokens, token_lengths, texts, decomposed_texts, start_index= step * batch_size)
+            self.Inference_Step(tokens, token_lengths, texts, pronunciations, start_index= step * batch_size)
 
         for model in self.model_dict.values():
             model.train()

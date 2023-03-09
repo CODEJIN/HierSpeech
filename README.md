@@ -21,11 +21,8 @@ Badlani, R., Łańcucki, A., Shih, K. J., Valle, R., Ping, W., & Catanzaro, B. (
     * The multi-head attention is changed to linearized attention in FFT Block.
         * By this change, positional encoding is removed.
     * Discriminator
-        * According to the advice of [the authors](https://github.com/sh-lee-prml) of the paper, **scale discriminator** and **multi stft discriminator** were applied as discriminators.
-    
-* I changed several hyper parameters and data type
+        * According to the advice of the paper [author](https://github.com/sh-lee-prml), **scale discriminator** and **multi stft discriminator** were applied as discriminators.
     * One of mel or spectrogram is can be selected as a feature type.
-    * Token type is changed from phoneme to grapheme.
 
 # Supported dataset
 * [LJ Dataset](https://keithito.com/LJ-Speech-Dataset/)
@@ -81,6 +78,16 @@ python Pattern_Generate.py [parameters]
 * -hp
     * The path of hyperparameter.
 
+## About phonemizer
+* To phoneme string generate, this repository uses phonimizer library.
+* Please refer [here](https://bootphon.github.io/phonemizer/install.html) to install phonemizer and backend
+* In Windows, you need more setting to use phonemizer.
+    * Please refer [here](https://github.com/bootphon/phonemizer/issues/44)
+    * In conda enviornment, the following commands are useful.
+        ```bash
+        conda env config vars set PHONEMIZER_ESPEAK_PATH='C:\Program Files\eSpeak NG'
+        conda env config vars set PHONEMIZER_ESPEAK_LIBRARY='C:\Program Files\eSpeak NG\libespeak-ng.dll'
+        ```
 # Run
 
 ## Command

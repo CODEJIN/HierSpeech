@@ -4,7 +4,7 @@ import numpy as np
 import pickle, os, logging
 from typing import Dict, List
 
-from Pattern_Generator import Text_Filtering, Decompose
+from Pattern_Generator import Text_Filtering, Phonemize
 from Modules.Nvidia_Alignment_Leraning_Framework import Attention_Prior_Generator
 
 def Text_to_Token(text: str, token_dict: Dict[str, int]):
@@ -108,7 +108,7 @@ class Dataset(torch.utils.data.Dataset):
         pattern_dict = pickle.load(open(path, 'rb'))
         speaker = pattern_dict['Speaker']
 
-        token = Text_to_Token(pattern_dict['Decomposed'], self.token_dict)
+        token = Text_to_Token(pattern_dict['Pronunciation'], self.token_dict)
 
         feature_min = self.feature_range_info_dict[speaker]['Min']
         feature_max = self.feature_range_info_dict[speaker]['Max']
@@ -134,20 +134,21 @@ class Inference_Dataset(torch.utils.data.Dataset):
         super().__init__()
         self.token_dict = token_dict
 
+        pronunciations = Phonemize(texts, language= 'English')
+
         self.patterns = []
-        for index, text in enumerate(texts):
+        for index, (text, pronunciation) in enumerate(zip(texts, pronunciations)):
             text = Text_Filtering(text)
             if text is None or text == '':
                 logging.warning('The text of index {} is incorrect. This index is ignoired.'.format(index))
                 continue            
 
-            self.patterns.append(text)
+            self.patterns.append((text, pronunciation))
 
     def __getitem__(self, idx):
-        text = self.patterns[idx]
-        decomposed_text = Decompose(text)
+        text, pronunciation = self.patterns[idx]
 
-        return Text_to_Token(decomposed_text, self.token_dict), text, decomposed_text
+        return Text_to_Token(pronunciation, self.token_dict), text, pronunciation
 
     def __len__(self):
         return len(self.patterns)
@@ -212,7 +213,7 @@ class Inference_Collater:
         self.token_dict = token_dict
          
     def __call__(self, batch):
-        tokens, texts, decomposed_texts = zip(*batch)
+        tokens, texts, pronunciations = zip(*batch)
 
         token_lengths = np.array([token.shape[0] for token in tokens])
         
@@ -221,4 +222,4 @@ class Inference_Collater:
         tokens = torch.LongTensor(tokens)   # [Batch, Time]
         token_lengths = torch.LongTensor(token_lengths)   # [Batch]
         
-        return tokens, token_lengths, texts, decomposed_texts
+        return tokens, token_lengths, texts, pronunciations

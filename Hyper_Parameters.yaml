@@ -6,8 +6,8 @@ Sound:
     Sample_Rate: 22050
     Mel_F_Min: 0
     Mel_F_Max: 8000
-    F0_Min: 50
-    F0_Max: 880
+    F0_Min: 65
+    F0_Max: 2094
 
 Feature_Type: 'Mel' #'Spectrogram', 'Mel'
 
@@ -15,7 +15,7 @@ Tokens: 104
 
 
 Encoder:
-    Size: 256
+    Size: 192
     Transformer:
         Stack: 4
         Head: 2
@@ -148,16 +148,16 @@ Train:
 
 Inference_Batch_Size: 16
 
-Inference_Path: './results/HierSpeech/Inference'
-Checkpoint_Path: './results/HierSpeech/Checkpoint'
-Log_Path: './results/HierSpeech/Log'
+Inference_Path: './results/Inference'
+Checkpoint_Path: './results/Checkpoint'
+Log_Path: './results/Log'
 
 Weights_and_Biases:
     # Use: true
     Use: false
-    Project: 'DiffTTS'
+    Project: 'HierSpeech'
     Entity: 'codejin'
-    Name: 'HierSpeech'
+    Name: 'Test'
     Save_Checkpoint:
         Use: false
         Interval: 50000 # Unlike local, The capacity of WandB is small.

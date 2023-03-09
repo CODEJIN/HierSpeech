@@ -3,3 +3,4 @@ matplotlib
 tensorboard
 torch
 wandb
+phonimizer
