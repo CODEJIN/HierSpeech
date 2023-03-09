@@ -561,6 +561,24 @@ class Text_Encoder(torch.nn.Module):
         embedding_variance = math.sqrt(3.0) * math.sqrt(2.0 / (self.hp.Tokens + self.hp.Encoder.Size))
         self.token_embedding.weight.data.uniform_(-embedding_variance, embedding_variance)
 
+        self.convs = torch.nn.ModuleList([
+            torch.nn.Sequential(
+                Conv1d(
+                    in_channels= self.hp.Encoder.Size,
+                    out_channels= self.hp.Encoder.Size,
+                    kernel_size= self.hp.Encoder.Conv.Kernel_Size,
+                    padding= (self.hp.Encoder.Conv.Kernel_Size - 1) // 2,
+                    w_init_gain= 'relu'
+                    ),
+                LayerNorm(
+                    num_features= self.hp.Encoder.Size,
+                    ),
+                torch.nn.ReLU(),
+                torch.nn.Dropout(p= self.hp.Encoder.Conv.Dropout_Rate)
+                )
+            for index in range(self.hp.Encoder.Conv.Stack)
+            ])
+
         self.blocks = torch.nn.ModuleList([
             FFT_Block(
                 channels= self.hp.Encoder.Size,
@@ -587,7 +605,12 @@ class Text_Encoder(torch.nn.Module):
         '''
         tokens: [Batch, Time]
         '''
+        masks = (~Mask_Generate(lengths= lengths, max_length= torch.ones_like(tokens[0]).sum())).unsqueeze(1).float()
+
         encodings = self.token_embedding(tokens).permute(0, 2, 1)
+        for conv in self.convs:
+            encodings = (conv(encodings * masks) + encodings) * masks
+
         for block in self.blocks:
             encodings = block(encodings, lengths)
 
