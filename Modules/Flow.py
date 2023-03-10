@@ -94,7 +94,8 @@ class Flow(torch.nn.Module):
         self.postnet = Conv1d(
             in_channels= calc_channels,
             out_channels= channels // 2,
-            kernel_size= 1
+            kernel_size= 1,
+            w_init_gain= 'zero'
             )
 
     def forward(
