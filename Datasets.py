@@ -62,7 +62,8 @@ class Dataset(torch.utils.data.Dataset):
         text_length_min: int,
         text_length_max: int,
         accumulated_dataset_epoch: int= 1,
-        augmentation_ratio: float= 0.0
+        augmentation_ratio: float= 0.0,
+        use_pattern_cache: bool= False
         ):
         super().__init__()
         self.token_dict = token_dict
@@ -70,6 +71,7 @@ class Dataset(torch.utils.data.Dataset):
         self.linear_spectrogram_range_info_dict = linear_spectrogram_range_info_dict
         self.feature_type = feature_type
         self.pattern_path = pattern_path
+        self.use_pattern_cache = use_pattern_cache
         
         if feature_type == 'Mel':
             feature_length_dict = 'Mel_Length_Dict'
@@ -103,7 +105,14 @@ class Dataset(torch.utils.data.Dataset):
 
         self.attention_prior_generator = Attention_Prior_Generator()
 
+        if use_pattern_cache:
+            self.real_pattern_count = len(self.patterns) // accumulated_dataset_epoch
+            self.pattern_cache_dict = {}
+
     def __getitem__(self, idx):
+        if self.use_pattern_cache and (idx % self.real_pattern_count) in self.pattern_cache_dict.keys():
+            return self.pattern_cache_dict[idx % self.real_pattern_count]
+
         path = os.path.join(self.pattern_path, self.patterns[idx]).replace('\\', '/')
         pattern_dict = pickle.load(open(path, 'rb'))
         speaker = pattern_dict['Speaker']
@@ -120,7 +129,12 @@ class Dataset(torch.utils.data.Dataset):
 
         attention_prior = self.attention_prior_generator.get_prior(feature.shape[0], token.shape[0])
 
-        return token, feature, pattern_dict['Audio'], linear_spectrogram, attention_prior
+        pattern = token, feature, pattern_dict['Audio'], linear_spectrogram, attention_prior
+
+        if self.use_pattern_cache:
+            self.pattern_cache_dict[idx % self.real_pattern_count] = pattern
+
+        return pattern
 
     def __len__(self):
         return len(self.patterns)

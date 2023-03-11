@@ -103,6 +103,7 @@ Language_Info_Path: 'D:/Datasets/22K.LJ/Language_Info.yaml'
 Gender_Info_Path: 'D:/Datasets/22K.LJ/Gender_Info.yaml'
 Language_and_Gender_Info_by_Speaker_Path: 'D:/Datasets/22K.LJ/Language_and_Gender_Info_by_Speaker.yaml'
 Train:
+    Pattern_Cache: True
     Train_Pattern:
         Path: 'D:/Datasets/22K.LJ/Train'
         Metadata_File: 'METADATA.PICKLE'
@@ -124,8 +125,8 @@ Train:
             Min: 10
             Max: 200
     Num_Workers: 0
-    Batch_Size: 12
-    Segment_Size: 128
+    Batch_Size: 16
+    Segment_Size: 32
     Learning_Rate:
         Initial: 1.0e-4
         Warmup_Step: 4000

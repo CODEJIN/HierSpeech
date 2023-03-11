@@ -102,7 +102,8 @@ class Trainer:
             text_length_min= self.hp.Train.Train_Pattern.Text_Length.Min,
             text_length_max= self.hp.Train.Train_Pattern.Text_Length.Max,
             accumulated_dataset_epoch= self.hp.Train.Train_Pattern.Accumulated_Dataset_Epoch,
-            augmentation_ratio= self.hp.Train.Train_Pattern.Augmentation_Ratio
+            augmentation_ratio= self.hp.Train.Train_Pattern.Augmentation_Ratio,
+            use_pattern_cache= self.hp.Train.Pattern_Cache
             )
         eval_dataset = Dataset(
             token_dict= token_dict,
@@ -114,7 +115,8 @@ class Trainer:
             feature_length_min= max(self.hp.Train.Train_Pattern.Feature_Length.Min, self.hp.Train.Segment_Size),
             feature_length_max= self.hp.Train.Eval_Pattern.Feature_Length.Max,
             text_length_min= self.hp.Train.Eval_Pattern.Text_Length.Min,
-            text_length_max= self.hp.Train.Eval_Pattern.Text_Length.Max
+            text_length_max= self.hp.Train.Eval_Pattern.Text_Length.Max,
+            use_pattern_cache= self.hp.Train.Pattern_Cache
             )
         inference_dataset = Inference_Dataset(
             token_dict= token_dict,
