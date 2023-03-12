@@ -5,7 +5,6 @@ import pickle, os, logging
 from typing import Dict, List
 
 from Pattern_Generator import Text_Filtering, Phonemize
-from Modules.Nvidia_Alignment_Leraning_Framework import Attention_Prior_Generator
 
 def Text_to_Token(text: str, token_dict: Dict[str, int]):
     return np.array([
@@ -36,17 +35,6 @@ def Audio_Stack(audios: List[np.ndarray], max_length: int= None):
         axis= 0
         )
     return audios
-
-def Attention_Prior_Stack(attention_priors: List[np.ndarray], max_token_length: int, max_feature_length: int):
-    attention_priors_padded = np.zeros(
-        shape= (len(attention_priors), max_feature_length, max_token_length),
-        dtype= np.float32
-        )    
-    for index, attention_prior in enumerate(attention_priors):
-        attention_priors_padded[index, :attention_prior.shape[0], :attention_prior.shape[1]] = attention_prior
-
-    return attention_priors_padded
-
 
 class Dataset(torch.utils.data.Dataset):
     def __init__(
@@ -103,8 +91,6 @@ class Dataset(torch.utils.data.Dataset):
                 ])
             ] * accumulated_dataset_epoch
 
-        self.attention_prior_generator = Attention_Prior_Generator()
-
         if use_pattern_cache:
             self.real_pattern_count = len(self.patterns) // accumulated_dataset_epoch
             self.pattern_cache_dict = {}
@@ -126,10 +112,8 @@ class Dataset(torch.utils.data.Dataset):
         feature_min = self.linear_spectrogram_range_info_dict[speaker]['Min']
         feature_max = self.linear_spectrogram_range_info_dict[speaker]['Max']
         linear_spectrogram = (pattern_dict['Spectrogram'] - feature_min) / (feature_max - feature_min) * 2.0 - 1.0
-
-        attention_prior = self.attention_prior_generator.get_prior(feature.shape[0], token.shape[0])
-
-        pattern = token, feature, pattern_dict['Audio'], linear_spectrogram, attention_prior
+        
+        pattern = token, feature, pattern_dict['Audio'], linear_spectrogram
 
         if self.use_pattern_cache:
             self.pattern_cache_dict[idx % self.real_pattern_count] = pattern
@@ -172,21 +156,16 @@ class Collater:
         self,
         token_dict: Dict[str, int],
         hop_size: int,
-        compatible_length: int
         ):
         self.token_dict = token_dict
         self.hop_size = hop_size
-        self.compatible_length = compatible_length
 
     def __call__(self, batch):
-        tokens, features, audios, linear_spectrograms, attention_priors = zip(*batch)
+        tokens, features, audios, linear_spectrograms = zip(*batch)
         token_lengths = np.array([token.shape[0] for token in tokens])
         feature_lengths = np.array([feature.shape[0] for feature in features])
 
-        max_token_length = max(token_lengths)
         max_feature_length = max(feature_lengths)
-        if max_feature_length % self.compatible_length != 0:
-            max_feature_length += self.compatible_length - max_feature_length % self.compatible_length
 
         tokens = Token_Stack(
             tokens= tokens,
@@ -204,11 +183,6 @@ class Collater:
             features= linear_spectrograms,
             max_length= max_feature_length
             )
-        attention_priors = Attention_Prior_Stack(
-            attention_priors= attention_priors,
-            max_token_length= max_token_length,
-            max_feature_length= max_feature_length
-            )
         
         tokens = torch.LongTensor(tokens)   # [Batch, Token_t]
         token_lengths = torch.LongTensor(token_lengths)   # [Batch]
@@ -216,9 +190,8 @@ class Collater:
         feature_lengths = torch.LongTensor(feature_lengths)   # [Batch]        
         audios = torch.FloatTensor(audios)    # [Batch, Audio_t], Audio_t == Feature_t * hop_size
         linear_spectrograms = torch.FloatTensor(linear_spectrograms).permute(0, 2, 1)   # [Batch, Spectrogram_d, Feature_t]
-        attention_priors = torch.FloatTensor(attention_priors) # [Batch, Token_t, Feature_t]
 
-        return tokens, token_lengths, features, feature_lengths, audios, linear_spectrograms, attention_priors
+        return tokens, token_lengths, features, feature_lengths, audios, linear_spectrograms
 
 class Inference_Collater:
     def __init__(self,

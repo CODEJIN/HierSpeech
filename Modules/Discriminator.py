@@ -213,7 +213,7 @@ class Scale_Discriminator(torch.nn.Module):
 
 def Feature_Map_Loss(feature_maps_list_for_real, feature_maps_list_for_fake):
     return torch.stack([
-        torch.mean(torch.abs(feature_maps_for_real - feature_maps_for_fake))
+        torch.mean(torch.abs(feature_maps_for_real.detach() - feature_maps_for_fake))
         for feature_maps_for_real, feature_maps_for_fake in zip(
             feature_maps_list_for_real,
             feature_maps_list_for_fake

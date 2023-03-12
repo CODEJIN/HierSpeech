@@ -7,7 +7,7 @@ import logging, yaml, os, sys, argparse, math, pickle, wandb
 from tqdm import tqdm
 from collections import defaultdict
 import matplotlib
-matplotlib.use('agg')
+# matplotlib.use('agg')
 import matplotlib.pyplot as plt
 from scipy.io import wavfile
 
@@ -130,8 +130,7 @@ class Trainer:
 
         collater = Collater(
             token_dict= token_dict,
-            hop_size= self.hp.Sound.Frame_Shift,
-            compatible_length= 1
+            hop_size= self.hp.Sound.Frame_Shift
             )
         inference_collater = Inference_Collater(
             token_dict= token_dict
@@ -220,7 +219,7 @@ class Trainer:
         # if self.gpu_id == 0:
         #     logging.info(self.model_dict['HierSpeech'])
 
-    def Train_Step(self, tokens, token_lengths, features, feature_lengths, audios, linear_spectrograms, attention_priors):
+    def Train_Step(self, tokens, token_lengths, features, feature_lengths, audios, linear_spectrograms):
         loss_dict = {}
         tokens = tokens.to(self.device, non_blocking=True)
         token_lengths = token_lengths.to(self.device, non_blocking=True)
@@ -228,19 +227,17 @@ class Trainer:
         feature_lengths = feature_lengths.to(self.device, non_blocking=True)
         audios = audios.to(self.device, non_blocking=True)
         linear_spectrograms = linear_spectrograms.to(self.device, non_blocking=True)
-        attention_priors = attention_priors.to(self.device, non_blocking=True)
 
         with torch.cuda.amp.autocast(enabled= self.hp.Use_Mixed_Precision):
             audio_predictions_slice, audios_slice, token_predictions, acoustic_distributions, \
             encoding_distributions_prior, encoding_distributions_posterior, linguistic_distributions_prior, linguistic_distributions_posterior, \
-            log_duration_predictions, durations, attention_softs, attention_hards, attention_logprobs = self.model_dict['HierSpeech'](
+            log_duration_predictions, durations = self.model_dict['HierSpeech'](
                 tokens= tokens,
                 token_lengths= token_lengths,
                 features= features,
                 feature_lengths= feature_lengths,
                 audios= audios,
-                linear_spectrograms= linear_spectrograms,
-                attention_priors= attention_priors
+                linear_spectrograms= linear_spectrograms
                 )
 
             if self.steps >= self.hp.Train.Discrimination_Step:
@@ -316,14 +313,11 @@ class Trainer:
                 scale= 1.0
                 )
             ).mean()
-        loss_dict['Attention_Binarization'] = self.criterion_dict['Attention_Binarization'](attention_hards, attention_softs)
-        loss_dict['Attention_CTC'] = self.criterion_dict['Attention_CTC'](attention_logprobs, token_lengths, feature_lengths)
         
         loss = \
             loss_dict['STFT'] + loss_dict['Log_Duration'] + loss_dict['TokenCTC'] + \
-            loss_dict['Encoding_KLD'] + loss_dict['Linguistic_KLD'] + loss_dict['Acoustic_KLD'] + \
-            loss_dict['Attention_Binarization'] + loss_dict['Attention_CTC']
-
+            loss_dict['Encoding_KLD'] + loss_dict['Linguistic_KLD'] + loss_dict['Acoustic_KLD']
+        
         if self.steps >= self.hp.Train.Discrimination_Step:
             with torch.cuda.amp.autocast(enabled= self.hp.Use_Mixed_Precision):
                 discriminations_list_for_real, feature_maps_list_for_real = self.model_dict['Discriminator'](audios_slice)
@@ -356,15 +350,14 @@ class Trainer:
             self.scalar_dict['Train']['Loss/{}'.format(tag)] += loss
 
     def Train_Epoch(self):
-        for tokens, token_lengths, features, feature_lengths, audios, linear_spectrograms, attention_priors in self.dataloader_dict['Train']:
+        for tokens, token_lengths, features, feature_lengths, audios, linear_spectrograms in self.dataloader_dict['Train']:
             self.Train_Step(
                 tokens= tokens,
                 token_lengths= token_lengths,
                 features= features,
                 feature_lengths= feature_lengths,
                 audios= audios,
-                linear_spectrograms= linear_spectrograms,
-                attention_priors= attention_priors
+                linear_spectrograms= linear_spectrograms
                 )
 
             if self.steps % self.hp.Train.Checkpoint_Save_Interval == 0:
@@ -398,7 +391,7 @@ class Trainer:
                 return
 
     @torch.no_grad()
-    def Evaluation_Step(self, tokens, token_lengths, features, feature_lengths, audios, linear_spectrograms, attention_priors):
+    def Evaluation_Step(self, tokens, token_lengths, features, feature_lengths, audios, linear_spectrograms):
         loss_dict = {}
         tokens = tokens.to(self.device, non_blocking=True)
         token_lengths = token_lengths.to(self.device, non_blocking=True)
@@ -406,18 +399,16 @@ class Trainer:
         feature_lengths = feature_lengths.to(self.device, non_blocking=True)
         audios = audios.to(self.device, non_blocking=True)
         linear_spectrograms = linear_spectrograms.to(self.device, non_blocking=True)
-        attention_priors = attention_priors.to(self.device, non_blocking=True)
 
         audio_predictions_slice, audios_slice, token_predictions, acoustic_distributions, \
         encoding_distributions_prior, encoding_distributions_posterior, linguistic_distributions_prior, linguistic_distributions_posterior, \
-        log_duration_predictions, durations, attention_softs, attention_hards, attention_logprobs = self.model_dict['HierSpeech'](
+        log_duration_predictions, durations = self.model_dict['HierSpeech'](
             tokens= tokens,
             token_lengths= token_lengths,
             features= features,
             feature_lengths= feature_lengths,
             audios= audios,
-            linear_spectrograms= linear_spectrograms,
-            attention_priors= attention_priors
+            linear_spectrograms= linear_spectrograms
             )
 
         token_masks = Mask_Generate(
@@ -472,8 +463,6 @@ class Trainer:
                 scale= 1.0
                 )
             ).mean()
-        loss_dict['Attention_Binarization'] = self.criterion_dict['Attention_Binarization'](attention_hards, attention_softs)
-        loss_dict['Attention_CTC'] = self.criterion_dict['Attention_CTC'](attention_logprobs, token_lengths, feature_lengths)
         
         if self.steps >= self.hp.Train.Discrimination_Step:
             discriminations_list_for_real, feature_maps_list_for_real = self.model_dict['Discriminator'](audios_slice)
@@ -494,7 +483,7 @@ class Trainer:
         for model in self.model_dict.values():
             model.eval()
 
-        for step, (tokens, token_lengths, features, feature_lengths, audios, linear_spectrograms, attention_priors) in tqdm(
+        for step, (tokens, token_lengths, features, feature_lengths, audios, linear_spectrograms) in tqdm(
             enumerate(self.dataloader_dict['Eval'], 1),
             desc='[Evaluation]',
             total= math.ceil(len(self.dataloader_dict['Eval'].dataset) / self.hp.Train.Batch_Size / self.num_gpus)
@@ -505,8 +494,7 @@ class Trainer:
                 features= features,
                 feature_lengths= feature_lengths,
                 audios= audios,
-                linear_spectrograms= linear_spectrograms,
-                attention_priors= attention_priors
+                linear_spectrograms= linear_spectrograms
                 )
 
         if self.gpu_id == 0:
@@ -521,7 +509,7 @@ class Trainer:
             index = np.random.randint(0, tokens.size(0))
 
             with torch.inference_mode():
-                prediction_audios, *_, duration_predictions, _, _, _ = self.model_dict['HierSpeech'](
+                prediction_audios, *_, duration_predictions, _ = self.model_dict['HierSpeech'](
                     tokens= tokens[index].unsqueeze(0).to(self.device),
                     token_lengths= token_lengths[index].unsqueeze(0).to(self.device)
                     )
@@ -622,7 +610,7 @@ class Trainer:
         tokens = tokens.to(self.device, non_blocking=True)
         token_lengths = token_lengths.to(self.device, non_blocking=True)
 
-        audio_predictions, *_, durations, _, _, _ = self.model_dict['HierSpeech'](
+        audio_predictions, *_, durations, _ = self.model_dict['HierSpeech'](
             tokens= tokens,
             token_lengths= token_lengths,
             )
