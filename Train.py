@@ -7,13 +7,13 @@ import logging, yaml, os, sys, argparse, math, pickle, wandb
 from tqdm import tqdm
 from collections import defaultdict
 import matplotlib
-# matplotlib.use('agg')
+matplotlib.use('agg')
 import matplotlib.pyplot as plt
 from scipy.io import wavfile
 
 from Modules.Modules import HierSpeech, Mask_Generate
 from Modules.Discriminator import Discriminator, Feature_Map_Loss, Generator_Loss, Discriminator_Loss
-from Modules.Nvidia_Alignment_Leraning_Framework import AttentionBinarizationLoss, AttentionCTCLoss
+from Modules.Flow import Flow_KL_Loss
 
 from Datasets import Dataset, Inference_Dataset, Collater, Inference_Collater
 from Noam_Scheduler import Noam_Scheduler
@@ -22,6 +22,7 @@ from Logger import Logger
 from meldataset import mel_spectrogram
 from distributed import init_distributed, apply_gradient_allreduce, reduce_tensor
 from Arg_Parser import Recursive_Parse, To_Non_Recursive_Dict
+
 
 import matplotlib as mpl
 # 유니코드 깨짐현상 해결
@@ -184,8 +185,7 @@ class Trainer:
                 blank= self.hp.Tokens,  # == Token length
                 zero_infinity=True
                 ),
-            'Attention_Binarization': AttentionBinarizationLoss(),
-            'Attention_CTC': AttentionCTCLoss()
+            'KL': Flow_KL_Loss
             }
         self.optimizer_dict = {
             'HierSpeech': torch.optim.NAdam(
@@ -265,6 +265,10 @@ class Trainer:
             lengths= token_lengths,
             max_length= tokens.size(1)
             ).to(tokens.device)
+        feature_masks = Mask_Generate(
+            lengths= feature_lengths,
+            max_length= features.size(2)
+            ).to(features.device)
 
         loss_dict['STFT'] = self.criterion_dict['MSE'](
             mel_spectrogram(
@@ -298,25 +302,22 @@ class Trainer:
                 input_lengths= feature_lengths,
                 target_lengths= token_lengths - 2
                 )
-        loss_dict['Encoding_KLD'] = torch.distributions.kl_divergence(
-            encoding_distributions_prior,
-            encoding_distributions_posterior
-            ).mean()
-        loss_dict['Linguistic_KLD'] = torch.distributions.kl_divergence(
-            linguistic_distributions_prior,
-            linguistic_distributions_posterior
-            ).mean()
-        loss_dict['Acoustic_KLD'] = torch.distributions.kl_divergence(
-            acoustic_distributions,
-            torch.distributions.Normal(
-                loc= 0.0,
-                scale= 1.0
-                )
-            ).mean()
+        loss_dict['Encoding_KLD'] = Flow_KL_Loss(
+            distributions= encoding_distributions_prior,
+            flows= encoding_distributions_posterior.loc,
+            flow_stds= encoding_distributions_posterior.scale,
+            masks= ~feature_masks.unsqueeze(1)
+            )
+        loss_dict['Linguistic_KLD'] = Flow_KL_Loss(
+            distributions= linguistic_distributions_prior,
+            flows= linguistic_distributions_posterior.loc,
+            flow_stds= linguistic_distributions_posterior.scale,
+            masks= ~feature_masks.unsqueeze(1)
+            )
         
         loss = \
             loss_dict['STFT'] + loss_dict['Log_Duration'] + loss_dict['TokenCTC'] + \
-            loss_dict['Encoding_KLD'] + loss_dict['Linguistic_KLD'] + loss_dict['Acoustic_KLD']
+            loss_dict['Encoding_KLD'] + loss_dict['Linguistic_KLD']
         
         if self.steps >= self.hp.Train.Discrimination_Step:
             with torch.cuda.amp.autocast(enabled= self.hp.Use_Mixed_Precision):
@@ -415,6 +416,10 @@ class Trainer:
             lengths= token_lengths,
             max_length= tokens.size(1)
             ).to(tokens.device)
+        feature_masks = Mask_Generate(
+            lengths= feature_lengths,
+            max_length= features.size(2)
+            ).to(features.device)
 
         loss_dict['STFT'] = self.criterion_dict['MSE'](
             mel_spectrogram(
@@ -444,26 +449,23 @@ class Trainer:
             ) * ~token_masks).mean()
         loss_dict['TokenCTC'] = self.criterion_dict['TokenCTC'](
                 log_probs= token_predictions.permute(2, 0, 1),  # [Feature_t, Batch, Token_n]
-                targets= tokens[:, 1:-1],   # Remove <S>, <E>
+                targets= tokens,   # Remove <S>, <E>
                 input_lengths= feature_lengths,
                 target_lengths= token_lengths - 2
                 )
-        loss_dict['Encoding_KLD'] = torch.distributions.kl_divergence(
-            encoding_distributions_prior,
-            encoding_distributions_posterior
-            ).mean()
-        loss_dict['Linguistic_KLD'] = torch.distributions.kl_divergence(
-            linguistic_distributions_prior,
-            linguistic_distributions_posterior
-            ).mean()
-        loss_dict['Acoustic_KLD'] = torch.distributions.kl_divergence(
-            acoustic_distributions,
-            torch.distributions.Normal(
-                loc= 0.0,
-                scale= 1.0
-                )
-            ).mean()
-        
+        loss_dict['Encoding_KLD'] = Flow_KL_Loss(
+            distributions= encoding_distributions_prior,
+            flows= encoding_distributions_posterior.loc,
+            flow_stds= encoding_distributions_posterior.scale,
+            masks= ~feature_masks.unsqueeze(1)
+            )
+        loss_dict['Linguistic_KLD'] = Flow_KL_Loss(
+            distributions= linguistic_distributions_prior,
+            flows= linguistic_distributions_posterior.loc,
+            flow_stds= linguistic_distributions_posterior.scale,
+            masks= ~feature_masks.unsqueeze(1)
+            )
+
         if self.steps >= self.hp.Train.Discrimination_Step:
             discriminations_list_for_real, feature_maps_list_for_real = self.model_dict['Discriminator'](audios_slice)
             discriminations_list_for_fake, feature_maps_list_for_fake = self.model_dict['Discriminator'](audio_predictions_slice)
