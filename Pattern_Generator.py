@@ -82,6 +82,16 @@ def Phonemize(text: Union[str, List[str]], language: str):
             pronunciation.append(' ')
         pronunciation.pop()
 
+        pronunciation_fix = []
+        for phoneme in pronunciation:
+            if len(phoneme) > 1 and \
+                phoneme[0] in ['ɐ','e','ɛ','i','j','ɫ','n','ŋ','o','p','q','t','u','ɯ','ʌ'] and \
+                not phoneme in ['eɪ','ɛɹ','iː','iə','oː','oːɹ','oʊ','ph','tɕ','tʃ','uː',]:
+                pronunciation_fix.extend([phoneme[0], phoneme[1:]])
+            else:
+                pronunciation_fix.append(phoneme)
+        pronunciation = pronunciation_fix
+
         if '' in pronunciation:
             print(phoneme_string)
             print(pronunciation)

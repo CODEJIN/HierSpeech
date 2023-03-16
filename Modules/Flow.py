@@ -112,7 +112,7 @@ class Flow(torch.nn.Module):
             masks= masks,
             conditions= conditions
             )   # [Batch, Calc_d, Time]
-        means = self.postnet(x_hiddens)   # [Batch, Dim // 2, Time]
+        means = self.postnet(x_hiddens) # [Batch, Dim // 2, Time]
 
         if not reverse:
             x_1 = (x_1 + means) * masks
@@ -148,31 +148,31 @@ class WaveNet(torch.nn.Module):
         self.use_condition = not condition_channels is None
 
         if self.use_condition:
-            self.condition = Conv1d(
+            self.condition = torch.nn.utils.weight_norm(Conv1d(
                 in_channels= condition_channels,
                 out_channels= calc_channels * conv_stack * 2,
                 kernel_size= 1
-                )
+                ))
         
         self.input_convs = torch.nn.ModuleList()
         self.residual_and_skip_convs = torch.nn.ModuleList()
         for index in range(conv_stack):
             dilation = dilation_rate ** index
             padding = (kernel_size - 1) * dilation // 2
-            self.input_convs.append(Conv1d(
+            self.input_convs.append(torch.nn.utils.weight_norm(Conv1d(
                 in_channels= calc_channels,
                 out_channels= calc_channels * 2,
                 kernel_size= kernel_size,
                 dilation= dilation,
                 padding= padding,
                 w_init_gain= 'gate'
-                ))
-            self.residual_and_skip_convs.append(Conv1d(
+                )))
+            self.residual_and_skip_convs.append(torch.nn.utils.weight_norm(Conv1d(
                 in_channels= calc_channels,
                 out_channels= calc_channels * 2,
                 kernel_size= 1,
                 w_init_gain= 'linear'
-                ))
+                )))
         
         self.dropout = torch.nn.Dropout(p= dropout_rate)
 
@@ -204,3 +204,13 @@ class WaveNet(torch.nn.Module):
         skips = torch.stack(skips_list, dim= 1).sum(dim= 1) * masks
 
         return skips
+
+def Flow_KL_Loss(distributions, flows, flow_stds, masks):
+    masks = masks.float()
+
+    loss = distributions.scale.log() - flow_stds.log() - 0.5
+    loss += 0.5 * (flows - distributions.loc).pow(2.0) * distributions.scale.pow(-2.0)
+
+    loss = (loss * masks).sum()  / masks.sum()
+
+    return loss

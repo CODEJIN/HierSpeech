@@ -7,20 +7,13 @@ from transformers import Wav2Vec2ForCTC
 
 from .Monotonic_Alignment_Search import Calc_Duration
 from .Gaussian_Upsampler import Gaussian_Upsampler
-from .Flow import FlowBlock
+from .Flow import FlowBlock, WaveNet
 from .Layer import Conv1d, ConvTranspose1d, Linear, Lambda, LayerNorm
 
 class HierSpeech(torch.nn.Module):
     def __init__(self, hyper_parameters: Namespace):
         super().__init__()
         self.hp = hyper_parameters
-
-        if self.hp.Feature_Type == 'Spectrogram':
-            feature_size = self.hp.Sound.N_FFT // 2 + 1
-        elif self.hp.Feature_Type == 'Mel':
-            feature_size = self.hp.Sound.Mel_Dim
-        else:
-            raise ValueError('Unknown feature type: {}'.format(self.hp.Feature_Type))
 
         self.text_encoder = Text_Encoder(self.hp)
         self.variance_block = Variance_Block(self.hp)
@@ -296,59 +289,6 @@ class Feature_Encoder(torch.nn.Module):
         distributions = torch.distributions.Normal(loc= means, scale= stds) # distribution of [Batch, Acoustic_d, Feature_t]
 
         return distributions
-
-class WaveNet(torch.nn.Module):
-    def __init__(
-        self,
-        calc_channels: int,
-        conv_stack: int,
-        kernel_size: int,
-        dilation_rate: int,
-        dropout_rate: float= 0.0
-        ):
-        super().__init__()
-        self.conv_stack = conv_stack
-        
-        self.input_convs = torch.nn.ModuleList()
-        self.residual_and_skip_convs = torch.nn.ModuleList()
-        for index in range(conv_stack):
-            dilation = dilation_rate ** index
-            padding = (kernel_size - 1) * dilation // 2
-            self.input_convs.append(Conv1d(
-                in_channels= calc_channels,
-                out_channels= calc_channels * 2,
-                kernel_size= kernel_size,
-                dilation= dilation,
-                padding= padding,
-                w_init_gain= 'gate'
-                ))
-            self.residual_and_skip_convs.append(Conv1d(
-                in_channels= calc_channels,
-                out_channels= calc_channels * 2,
-                kernel_size= 1,
-                w_init_gain= 'linear'
-                ))
-        
-        self.dropout = torch.nn.Dropout(p= dropout_rate)
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        masks: torch.Tensor
-        ):
-        skips_list = []
-        for in_conv, residual_and_skip_conv in zip(self.input_convs, self.residual_and_skip_convs):
-            ins = in_conv(x)
-            ins_tanh, ins_sigmoid = ins.chunk(chunks= 2, dim= 1)
-            acts = ins_tanh.tanh() * ins_sigmoid.sigmoid()
-            acts = self.dropout(acts)
-            residuals, skips = residual_and_skip_conv(acts).chunk(chunks= 2, dim= 1)
-            x = (x + residuals) * masks
-            skips_list.append(skips)
-
-        skips = torch.stack(skips_list, dim= 1).sum(dim= 1) * masks
-
-        return skips
 
 class Acoustic_Encoder(Feature_Encoder):
     def __init__(

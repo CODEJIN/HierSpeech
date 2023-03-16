@@ -553,7 +553,7 @@ class Trainer:
             image_dict = {
                 'Feature/Target': (target_feature, None, 'auto', None, None, None),
                 'Feature/Prediction': (prediction_feature, None, 'auto', None, None, None),
-                'Duration/Prediction': (duration_prediction[:feature_lengths[index]], None, 'auto', (0, features.size(2)), (0, tokens.size(1)), None),
+                'Duration/Prediction': (duration_prediction[:feature_lengths[index]], None, 'auto', (0, prediction_feature_length), (0, tokens[index].size(0)), None),
                 }
             audio_dict = {
                 'Audio/Target': (target_audio, self.hp.Sound.Sample_Rate),
@@ -577,7 +577,7 @@ class Trainer:
                         'Evaluation.Feature.Target': wandb.Image(target_feature),
                         'Evaluation.Feature.Prediction': wandb.Image(prediction_feature),
                         'Evaluation.Duration': wandb.plot.line_series(
-                            xs= np.arange(feature_lengths[index].cpu().numpy()),
+                            xs= np.arange(prediction_feature_length),
                             ys= [
                                     duration_prediction[:feature_lengths[index]]
                                     ],

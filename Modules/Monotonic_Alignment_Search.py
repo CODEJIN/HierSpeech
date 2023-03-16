@@ -23,7 +23,7 @@ def Calc_Duration(
         
         # negative cross-entropy
         stds_p_sq_r = encoding_stds.pow(-2.0)  # [Batch, Enc_d, Enc_t]
-        neg_cent1 = torch.sum(-0.5 * math.log(2 * math.pi) - encoding_stds.clamp(min= 1e-3).log(), [1], keepdim=True) # [Batch, 1, Enc_t]
+        neg_cent1 = torch.sum(-0.5 * math.log(2 * math.pi) - encoding_stds.log().clamp(min= 1e-3).log(), [1], keepdim=True) # [Batch, 1, Enc_t]
         neg_cent2 = torch.matmul(-0.5 * (decodings ** 2).permute(0, 2, 1), stds_p_sq_r) # [Batch, Dec_t, Enc_d] x [Batch, Enc_d, Enc_t] -> [Batch, Dec_t, Enc_t]
         neg_cent3 = torch.matmul(decodings.permute(0, 2, 1), (encoding_means * stds_p_sq_r)) # [Batch, Dec_t, Enc_d] x [b, Enc_d, Enc_t] -> [Batch, Dec_t, Enc_t]
         neg_cent4 = torch.sum(-0.5 * (encoding_means ** 2) * stds_p_sq_r, [1], keepdim=True) # [Batch, 1, Enc_t]

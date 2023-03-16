@@ -91,25 +91,25 @@ class STFT_Discriminator(torch.nn.Module):
             dilation_list
             ):
             block = torch.nn.Sequential(
-                Conv2d(
+                torch.nn.utils.weight_norm(Conv2d(
                     in_channels= previous_channels,
                     out_channels= channels,
                     kernel_size= kernel_size,
                     stride= stride,
                     dilation= dilation,
                     padding= (((kernel_size[0] - 1) * dilation[0]) // 2, ((kernel_size[1] - 1) * dilation[1]) // 2)
-                    ),
+                    )),
                 torch.nn.LeakyReLU(negative_slope= leaky_relu_negative_slope)
                 )
             self.blocks.append(block)
             previous_channels = channels
 
-        self.postnet = Conv2d(
+        self.postnet = torch.nn.utils.weight_norm(Conv2d(
             in_channels= previous_channels,
             out_channels= 1,
             kernel_size= 3,
             padding= 1
-            )
+            ))
         
     def forward(self, audios: torch.Tensor):
         x = self.prenet(audios).unsqueeze(1)   # [Batch, 1, Feature_d, Feature_t]
@@ -179,25 +179,25 @@ class Scale_Discriminator(torch.nn.Module):
             gropus_list,
             ):
             block = torch.nn.Sequential(
-                Conv1d(
+                torch.nn.utils.weight_norm(Conv1d(
                     in_channels= previous_channels,
                     out_channels= channels,
                     kernel_size= kernel_size,
                     stride= stride,
                     groups= groups,
                     padding= (kernel_size - 1) // 2
-                    ),
+                    )),
                 torch.nn.LeakyReLU(negative_slope= leaky_relu_negative_slope)
                 )
             self.blocks.append(block)
             previous_channels = channels
 
-        self.postnet = Conv1d(
+        self.postnet = torch.nn.utils.weight_norm(Conv1d(
             in_channels= previous_channels,
             out_channels= 1,
             kernel_size= 3,
             padding= 1
-            )
+            ))
 
     def forward(self, audios: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor]]:
         x = audios.unsqueeze(1) # [Batch, 1, Audio_t]

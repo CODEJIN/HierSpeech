@@ -158,8 +158,8 @@ Checkpoint_Path: './results/Checkpoint'
 Log_Path: './results/Log'
 
 Weights_and_Biases:
-    Use: true
-    # Use: false
+    # Use: true
+    Use: false
     Project: 'HierSpeech'
     Entity: 'codejin'
     Name: 'Test'
