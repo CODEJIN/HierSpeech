@@ -10,16 +10,19 @@ Badlani, R., Łańcucki, A., Shih, K. J., Valle, R., Ping, W., & Catanzaro, B. (
 ```
 
 # Structure
-* Structure is referred from the HierSpeech, but I changed several parts.    
-    * Stochastic duration predictor is changed to normal duration predictor.
-        * This is just for simplicity of code organization.
-        * If you want to apply the stochastic duration predictor, the implementation of the module can be found in the [VITS repository](https://github.com/jaywalnut310/vits/blob/2e561ba58618d021b5b8323d3765880f7e0ecfdb/models.py#L17-L95).
-    * Gaussian upsampler is applied.
-    * The multi-head attention is changed to linearized attention in FFT Block.
-        * By this change, positional encoding is removed.
-    * Discriminator
-        * According to the advice of the paper [author](https://github.com/sh-lee-prml), **scale discriminator** and **multi stft discriminator** were applied as discriminators.
-    * One of mel or spectrogram is can be selected as a feature type.
+* Structure is referred from the HierSpeech, but I changed several parts.
+* Although original HierSpeech is based on the Monotonic Alignment Search(MAS) to get target duration, this repository uses Alignment Learning Framework(ALF).
+    * I believe this is not critical difference, but it may be changed when there will be a problems while training.
+    * ALF is referred from Nvidia FastPitch 1.1 repository
+* Stochastic duration predictor is changed to normal duration predictor.
+    * This is just for simplicity of code organization.
+    * If you want to apply the stochastic duration predictor, the implementation of the module can be found in the [VITS repository](https://github.com/jaywalnut310/vits/blob/2e561ba58618d021b5b8323d3765880f7e0ecfdb/models.py#L17-L95).
+* Gaussian upsampler is applied.
+* The multi-head attention is changed to linearized attention in FFT Block.
+    * By this change, positional encoding is removed.
+* Discriminator
+    * According to the advice of the paper [author](https://github.com/sh-lee-prml), **scale discriminator** and **multi stft discriminator** were applied as discriminators.
+* One of mel or spectrogram is can be selected as a feature type.
 
 # Supported dataset
 * [LJ Dataset](https://keithito.com/LJ-Speech-Dataset/)
@@ -112,3 +115,5 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 OMP_NUM_THREADS=32 python -m torch.distribu
 
 # TODO
 * This repository is WIP.
+* Frame prior network
+* F0(pitch) apply

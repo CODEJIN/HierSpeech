@@ -2,9 +2,10 @@ from argparse import Namespace
 import torch
 import numpy as np
 import pickle, os, logging
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from Pattern_Generator import Text_Filtering, Phonemize
+from Modules.Nvidia_Alignment_Leraning_Framework import Attention_Prior_Generator
 
 def Text_to_Token(text: str, token_dict: Dict[str, int]):
     return np.array([
@@ -12,7 +13,7 @@ def Text_to_Token(text: str, token_dict: Dict[str, int]):
         for letter in ['<S>'] + list(text) + ['<E>']
         ], dtype= np.int32)
 
-def Token_Stack(tokens: List[np.ndarray], token_dict, max_length: int= None):
+def Token_Stack(tokens: List[np.ndarray], token_dict, max_length: Optional[int]= None):
     max_token_length = max_length or max([token.shape[0] for token in tokens])
     tokens = np.stack(
         [np.pad(token, [0, max_token_length - token.shape[0]], constant_values= token_dict['<E>']) for token in tokens],
@@ -20,7 +21,7 @@ def Token_Stack(tokens: List[np.ndarray], token_dict, max_length: int= None):
         )
     return tokens
 
-def Feature_Stack(features: List[np.ndarray], max_length: int= None):
+def Feature_Stack(features: List[np.ndarray], max_length: Optional[int]= None):
     max_feature_length = max_length or max([feature.shape[0] for feature in features])
     features = np.stack(
         [np.pad(feature, [[0, max_feature_length - feature.shape[0]], [0, 0]], constant_values= -1.0) for feature in features],
@@ -28,7 +29,7 @@ def Feature_Stack(features: List[np.ndarray], max_length: int= None):
         )
     return features
 
-def Audio_Stack(audios: List[np.ndarray], max_length: int= None):
+def Audio_Stack(audios: List[np.ndarray], max_length: Optional[int]= None):
     max_audio_length = max_length or max([energy.shape[0] for energy in audios])
     audios = np.stack(
         [np.pad(audio, [0, max_audio_length - audio.shape[0]], constant_values= 0.0) for audio in audios],
@@ -36,12 +37,20 @@ def Audio_Stack(audios: List[np.ndarray], max_length: int= None):
         )
     return audios
 
+def Attention_Prior_Stack(attention_priors: List[np.ndarray], max_token_length: int, max_feature_length: int):
+    attention_priors_padded = np.zeros(
+        shape= (len(attention_priors), max_feature_length, max_token_length),
+        dtype= np.float32
+        )    
+    for index, attention_prior in enumerate(attention_priors):
+        attention_priors_padded[index, :attention_prior.shape[0], :attention_prior.shape[1]] = attention_prior
+
+    return attention_priors_padded
+
 class Dataset(torch.utils.data.Dataset):
     def __init__(
         self,
         token_dict: Dict[str, int],
-        feature_range_info_dict: Dict[str, Dict[str, float]],
-        linear_spectrogram_range_info_dict: Dict[str, Dict[str, float]],
         pattern_path: str,
         metadata_file: str,
         feature_type: str,
@@ -55,8 +64,6 @@ class Dataset(torch.utils.data.Dataset):
         ):
         super().__init__()
         self.token_dict = token_dict
-        self.feature_range_info_dict = feature_range_info_dict
-        self.linear_spectrogram_range_info_dict = linear_spectrogram_range_info_dict
         self.feature_type = feature_type
         self.pattern_path = pattern_path
         self.use_pattern_cache = use_pattern_cache
@@ -91,6 +98,8 @@ class Dataset(torch.utils.data.Dataset):
                 ])
             ] * accumulated_dataset_epoch
 
+        self.attention_prior_generator = Attention_Prior_Generator()
+
         if use_pattern_cache:
             self.real_pattern_count = len(self.patterns) // accumulated_dataset_epoch
             self.pattern_cache_dict = {}
@@ -101,19 +110,12 @@ class Dataset(torch.utils.data.Dataset):
 
         path = os.path.join(self.pattern_path, self.patterns[idx]).replace('\\', '/')
         pattern_dict = pickle.load(open(path, 'rb'))
-        speaker = pattern_dict['Speaker']
-
-        token = Text_to_Token(pattern_dict['Pronunciation'], self.token_dict)
-
-        feature_min = self.feature_range_info_dict[speaker]['Min']
-        feature_max = self.feature_range_info_dict[speaker]['Max']
-        feature = (pattern_dict[self.feature_type] - feature_min) / (feature_max - feature_min) * 2.0 - 1.0
-
-        feature_min = self.linear_spectrogram_range_info_dict[speaker]['Min']
-        feature_max = self.linear_spectrogram_range_info_dict[speaker]['Max']
-        linear_spectrogram = (pattern_dict['Spectrogram'] - feature_min) / (feature_max - feature_min) * 2.0 - 1.0
         
-        pattern = token, feature, pattern_dict['Audio'], linear_spectrogram
+        token = Text_to_Token(pattern_dict['Pronunciation'], self.token_dict)
+        feature = pattern_dict[self.feature_type]
+        attention_prior = self.attention_prior_generator.get_prior(feature.shape[0], token.shape[0])
+        
+        pattern = token, feature, pattern_dict['Audio'], pattern_dict['Spectrogram'], attention_prior
 
         if self.use_pattern_cache:
             self.pattern_cache_dict[idx % self.real_pattern_count] = pattern
@@ -161,10 +163,11 @@ class Collater:
         self.hop_size = hop_size
 
     def __call__(self, batch):
-        tokens, features, audios, linear_spectrograms = zip(*batch)
+        tokens, features, audios, linear_spectrograms, attention_priors = zip(*batch)
         token_lengths = np.array([token.shape[0] for token in tokens])
         feature_lengths = np.array([feature.shape[0] for feature in features])
 
+        max_token_length = max(token_lengths)
         max_feature_length = max(feature_lengths)
 
         tokens = Token_Stack(
@@ -183,6 +186,11 @@ class Collater:
             features= linear_spectrograms,
             max_length= max_feature_length
             )
+        attention_priors = Attention_Prior_Stack(
+            attention_priors= attention_priors,
+            max_token_length= max_token_length,
+            max_feature_length= max_feature_length
+            )
         
         tokens = torch.LongTensor(tokens)   # [Batch, Token_t]
         token_lengths = torch.LongTensor(token_lengths)   # [Batch]
@@ -190,8 +198,9 @@ class Collater:
         feature_lengths = torch.LongTensor(feature_lengths)   # [Batch]        
         audios = torch.FloatTensor(audios)    # [Batch, Audio_t], Audio_t == Feature_t * hop_size
         linear_spectrograms = torch.FloatTensor(linear_spectrograms).permute(0, 2, 1)   # [Batch, Spectrogram_d, Feature_t]
+        attention_priors = torch.FloatTensor(attention_priors) # [Batch, Token_t, Feature_t]
 
-        return tokens, token_lengths, features, feature_lengths, audios, linear_spectrograms
+        return tokens, token_lengths, features, feature_lengths, audios, linear_spectrograms, attention_priors
 
 class Inference_Collater:
     def __init__(self,

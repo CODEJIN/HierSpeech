@@ -5,7 +5,7 @@ from typing import Optional, List, Dict, Tuple, Union
 
 from transformers import Wav2Vec2ForCTC
 
-from .Monotonic_Alignment_Search import Calc_Duration
+from .Nvidia_Alignment_Leraning_Framework import Alignment_Learning_Framework
 from .Gaussian_Upsampler import Gaussian_Upsampler
 from .Flow import FlowBlock, WaveNet
 from .Layer import Conv1d, ConvTranspose1d, Linear, Lambda, LayerNorm
@@ -15,9 +15,17 @@ class HierSpeech(torch.nn.Module):
         super().__init__()
         self.hp = hyper_parameters
 
-        self.text_encoder = Text_Encoder(self.hp)
-        self.variance_block = Variance_Block(self.hp)
+        if self.hp.Feature_Type == 'Spectrogram':
+            feature_size = self.hp.Sound.N_FFT // 2 + 1
+        elif self.hp.Feature_Type == 'Mel':
+            feature_size = self.hp.Sound.Mel_Dim
+        else:
+            raise ValueError('Unknown feature type: {}'.format(self.hp.Feature_Type))
 
+        self.text_encoder = Text_Encoder(self.hp)
+        
+        self.decoder = Decoder(self.hp)
+        
         self.linguistic_encoder = Linguistic_Encoder(self.hp)
         self.linguistic_flow = FlowBlock(
             channels= self.hp.Encoder.Size,
@@ -28,8 +36,7 @@ class HierSpeech(torch.nn.Module):
             flow_wavnet_dilation_rate= self.hp.Linguistic_Flow.Dilation_Rate,
             flow_wavenet_dropout_rate= self.hp.Linguistic_Flow.Dropout_Rate
             )
-        self.token_predictor = Token_Predictor(self.hp)
-        
+
         self.acoustic_encoder = Acoustic_Encoder(self.hp)
         self.acoustic_flow = FlowBlock(
             channels= self.hp.Encoder.Size,
@@ -40,8 +47,16 @@ class HierSpeech(torch.nn.Module):
             flow_wavnet_dilation_rate= self.hp.Acoustic_Flow.Dilation_Rate,
             flow_wavenet_dropout_rate= self.hp.Acoustic_Flow.Dropout_Rate
             )
+
+        self.alignment_learning_framework = Alignment_Learning_Framework(
+            feature_size= feature_size,
+            encoding_size= self.hp.Encoder.Size
+            )
+        self.variance_block = Variance_Block(self.hp)
+
+        self.token_predictor = Token_Predictor(self.hp)
+        
         self.segment = Segment()
-        self.decoder = Decoder(self.hp)
 
     def forward(
         self,
@@ -50,7 +65,8 @@ class HierSpeech(torch.nn.Module):
         features: torch.FloatTensor= None,
         feature_lengths: torch.Tensor= None,
         audios: torch.Tensor= None,
-        linear_spectrograms: torch.Tensor= None,
+        linear_spectrograms: torch.Tensor= None,        
+        attention_priors: torch.Tensor= None,
         length_scales: Union[float, List[float], torch.Tensor]= 1.0,
         ):
         if not features is None and not feature_lengths is None:    # train
@@ -61,6 +77,7 @@ class HierSpeech(torch.nn.Module):
                 feature_lengths= feature_lengths,
                 audios= audios,
                 linear_spectrograms= linear_spectrograms,
+                attention_priors= attention_priors,
                 )
         else:   #  inference
             return self.Inference(
@@ -76,74 +93,60 @@ class HierSpeech(torch.nn.Module):
         features: torch.FloatTensor,
         feature_lengths: torch.Tensor,
         audios: torch.Tensor,
-        linear_spectrograms: torch.Tensor
+        linear_spectrograms: torch.Tensor,
+        attention_priors: torch.Tensor,
         ):
-        encoding_means, encoding_stds, encodings = self.text_encoder(
+        encoding_means, encoding_log_stds, encodings = self.text_encoder(
             tokens= tokens,
             lengths= token_lengths
             )
         
-        linguistic_distributions_prior = self.linguistic_encoder(
-            audios= audios,
-            lengths= feature_lengths
-            )
-        lingustic_samples = linguistic_distributions_prior.rsample()
+        linguistic_means, linguistic_log_stds = self.linguistic_encoder(audios, feature_lengths)
+        linguistic_samples = linguistic_means + linguistic_log_stds.exp() * torch.randn_like(linguistic_log_stds)
         linguistic_flows = self.linguistic_flow(
-            x= lingustic_samples,
+            x= linguistic_samples,
             lengths= feature_lengths,
             reverse= False
             )   # [Batch, Enc_d, Feature_t]
 
-        durations = Calc_Duration(
-            encoding_means= encoding_means,
-            encoding_stds= encoding_stds,
-            encoding_lengths= token_lengths,
-            decodings= linguistic_flows,
-            decoding_lengths= feature_lengths
-            )
-        
-        alignments, log_duration_predictions, durations = self.variance_block(
-            encodings= encodings,
-            encoding_lengths= token_lengths,
-            durations= durations
-            )
-
-        encoding_distributions_prior = torch.distributions.Normal(
-            loc= encoding_means @ alignments,
-            scale= torch.clamp(encoding_stds @ alignments, min= 1e-3)
-            )   # [Batch, Enc_d, Enc_t] @ [Batch, Enc_t, Feature_t] -> [Batch, Enc_d, Feature_t]
-        
-        encoding_distributions_posterior = torch.distributions.Normal(
-            loc= linguistic_flows,
-            scale= linguistic_distributions_prior.scale
-            )
-        
-        token_predictions = self.token_predictor(
-            encodings= lingustic_samples,
-            lengths= feature_lengths
-            )
-        
-        acoustic_distributions = self.acoustic_encoder(
-            features= linear_spectrograms,
-            lengths= feature_lengths
-            )
-        acoustic_samples = acoustic_distributions.rsample() # [Batch, Enc_d, Feature_t]
+        acoustic_means, acoustic_log_stds = self.acoustic_encoder(linear_spectrograms, feature_lengths)
+        acoustic_samples = acoustic_means + acoustic_log_stds.exp() * torch.randn_like(acoustic_log_stds)
         acoustic_flows = self.acoustic_flow(
             x= acoustic_samples,
             lengths= feature_lengths,
             reverse= False
             )   # [Batch, Enc_d, Feature_t]
-        linguistic_distributions_posterior = torch.distributions.Normal(
-            loc= acoustic_flows,
-            scale= acoustic_distributions.scale
+
+        durations, attention_softs, attention_hards, attention_logprobs = self.alignment_learning_framework(
+            token_embeddings= self.text_encoder.token_embedding(tokens).permute(0, 2, 1),
+            encodings= encodings,
+            encoding_lengths= token_lengths,
+            features= features,
+            feature_lengths= feature_lengths,
+            attention_priors= attention_priors
             )
+        alignments, log_duration_predictions, durations = self.variance_block(
+            encodings= encodings,
+            encoding_lengths= token_lengths,
+            durations= durations
+            )
+        
+        encoding_means = encoding_means @ alignments
+        encoding_log_stds = encoding_log_stds @ alignments
 
         acoustic_samples_slice, offsets = self.segment(
             patterns= acoustic_samples.permute(0, 2, 1),
             segment_size= self.hp.Train.Segment_Size,
             lengths= feature_lengths
-            )        
+            )
         acoustic_samples_slice = acoustic_samples_slice.permute(0, 2, 1)    # [Batch, Enc_d, Feature_st]
+
+        features_slice, _ = self.segment(
+            patterns= features.permute(0, 2, 1),
+            segment_size= self.hp.Train.Segment_Size,
+            offsets= offsets
+            )
+        features_slice = features_slice.permute(0, 2, 1)    # [Batch, Enc_d, Feature_st]
 
         audios_slice, _ = self.segment(
             patterns= audios,
@@ -155,11 +158,16 @@ class HierSpeech(torch.nn.Module):
             encodings= acoustic_samples_slice,
             lengths= torch.full_like(feature_lengths, self.hp.Train.Segment_Size)
             )
-                
+
+        token_predictions = self.token_predictor(
+            encodings= linguistic_samples
+            )
+
         return \
-            audio_predictions_slice, audios_slice, token_predictions, acoustic_distributions, \
-            encoding_distributions_prior, encoding_distributions_posterior, linguistic_distributions_prior, linguistic_distributions_posterior, \
-            log_duration_predictions, durations
+            audio_predictions_slice, audios_slice, features_slice, token_predictions, \
+            encoding_means, encoding_log_stds, linguistic_flows, linguistic_log_stds, \
+            linguistic_means, linguistic_log_stds, acoustic_flows, acoustic_log_stds, \
+            attention_softs, attention_hards, attention_logprobs, log_duration_predictions, durations
 
     def Inference(
         self,
@@ -169,10 +177,11 @@ class HierSpeech(torch.nn.Module):
         ):
         length_scales = self.Scale_to_Tensor(tokens= tokens, scale= length_scales)
 
-        encoding_means, encoding_stds, encodings = self.text_encoder(
+        encoding_means, encoding_log_stds, encodings = self.text_encoder(
             tokens= tokens,
             lengths= token_lengths
             )
+   
         alignments, _, durations = self.variance_block(
             encodings= encodings,
             encoding_lengths= token_lengths,
@@ -182,32 +191,33 @@ class HierSpeech(torch.nn.Module):
             duration[:token_length].sum()
             for duration, token_length in zip(durations, token_lengths)
             ])
-
-        encoding_distributions = torch.distributions.Normal(
-            loc= encoding_means @ alignments,
-            scale= torch.clamp(encoding_stds @ alignments, min= 1e-3)
-            )   # [Batch, Enc_d, Enc_t] @ [Batch, Enc_t, Feature_t] -> [Batch, Enc_d, Feature_t]
         
+        encoding_means = encoding_means @ alignments
+        encoding_log_stds = encoding_log_stds @ alignments
+        encoding_samples = encoding_means + encoding_log_stds.exp() * torch.randn_like(encoding_log_stds)
+
         linguistic_samples = self.linguistic_flow(
-            x= encoding_distributions.rsample(),
+            x= encoding_samples,
             lengths= feature_lengths,
             reverse= True
             )   # [Batch, Enc_d, Feature_t]
+
         acoustic_samples = self.acoustic_flow(
             x= linguistic_samples,
             lengths= feature_lengths,
             reverse= True
             )   # [Batch, Enc_d, Feature_t]
-        
+
         audio_predictions = self.decoder(
             encodings= acoustic_samples,
             lengths= feature_lengths
             )
 
         return \
-            audio_predictions, None, None, \
+            audio_predictions, None, None, None, \
             None, None, None, None, \
-            durations, None
+            None, None, None, None, \
+            None, None, None, None, durations
 
     def Scale_to_Tensor(
         self,
@@ -230,256 +240,14 @@ class HierSpeech(torch.nn.Module):
 
         return scale.to(tokens.device)
 
-
-class Feature_Encoder(torch.nn.Module): 
-    def __init__(
-        self,
-        in_channels: int,
-        out_channels: int,
-        wavenet_stack: int,
-        conv_stack: int,
-        kernel_size: int,
-        dilation_rate: int,
-        dropout_rate: float
-        ):
-        super().__init__()
-
-        self.prenet = Conv1d(
-            in_channels= in_channels,
-            out_channels= out_channels,
-            kernel_size= 1,
-            w_init_gain= 'linear'
-            )
-
-        self.wavenet_block = torch.nn.ModuleList([
-            WaveNet(
-                calc_channels= out_channels,
-                conv_stack= conv_stack,
-                kernel_size= kernel_size,
-                dilation_rate= dilation_rate,
-                dropout_rate= dropout_rate,
-                )
-            for _ in range(wavenet_stack)
-            ])
-        
-        self.projection = Conv1d(
-            in_channels= out_channels,
-            out_channels= out_channels * 2,
-            kernel_size= 1,
-            w_init_gain= 'linear'
-            )
-            
-    def forward(
-        self,
-        features: torch.Tensor,
-        lengths: torch.Tensor,
-        ) -> torch.distributions.Normal:
-        '''
-        features: [Batch, Feature_d, Feature_t], Spectrogram
-        lengths: [Batch]
-        '''
-        masks = (~Mask_Generate(lengths= lengths, max_length= torch.ones_like(features[0, 0]).sum())).unsqueeze(1).float()  # [Batch, 1, Feature_t]
-
-        encodings = self.prenet(features) * masks   # [Batch, Acoustic_d, Feature_t]
-        for block in self.wavenet_block:
-            encodings = block(encodings, masks)
-
-        means, stds = self.projection(encodings).chunk(chunks= 2, dim= 1)   # [Batch, Acoustic_d, Feature_t] * 2
-        stds = torch.nn.functional.softplus(stds)
-        distributions = torch.distributions.Normal(loc= means, scale= stds) # distribution of [Batch, Acoustic_d, Feature_t]
-
-        return distributions
-
-class Acoustic_Encoder(Feature_Encoder):
-    def __init__(
-        self,
-        hyper_parameters: Namespace
-        ):
-        self.hp = hyper_parameters
-
-        super().__init__(
-            in_channels= self.hp.Sound.N_FFT // 2 + 1,  # Spectrogram
-            out_channels= self.hp.Encoder.Size,
-            wavenet_stack= self.hp.Acoustic_Encoder.WaveNet_Stack,
-            conv_stack= self.hp.Acoustic_Encoder.Conv_Stack,
-            kernel_size= self.hp.Acoustic_Encoder.Kernel_Size,
-            dilation_rate= self.hp.Acoustic_Encoder.Dilation_Rate,
-            dropout_rate= self.hp.Acoustic_Encoder.Dropout_Rate,
-            )
-
-class Linguistic_Encoder(Feature_Encoder):
-    def __init__(
-        self,
-        hyper_parameters: Namespace
-        ):
-        self.hp = hyper_parameters
-        
-        super().__init__(
-            in_channels= 512,
-            out_channels= self.hp.Encoder.Size,
-            wavenet_stack= self.hp.Linguistic_Encoder.WaveNet_Stack,
-            conv_stack= self.hp.Linguistic_Encoder.Conv_Stack,
-            kernel_size= self.hp.Linguistic_Encoder.Kernel_Size,
-            dilation_rate= self.hp.Linguistic_Encoder.Dilation_Rate,
-            dropout_rate= self.hp.Linguistic_Encoder.Dropout_Rate,
-            )
-        
-        wav2vec2 = Wav2Vec2ForCTC.from_pretrained('facebook/wav2vec2-xls-r-2b')
-        wav2vec2.freeze_feature_encoder()
-        self.feature_extractor = wav2vec2.wav2vec2.feature_extractor
-        self.norm = LayerNorm(
-            num_features= 512
-            )
-
-    def forward(
-        self,
-        audios: torch.Tensor,
-        lengths: torch.Tensor,
-        ) -> torch.distributions.Normal:
-        '''
-        audios: [Batch, Audio_t], Raw waveform
-        lengths: [Batch], * This is feature length, not waveform length.
-        '''
-        with torch.no_grad():
-            audios = torchaudio.functional.resample(audios, self.hp.Sound.Sample_Rate, 16000)
-            features = self.feature_extractor(audios)
-            features = torchvision.transforms.functional.resize(
-                features.unsqueeze(1),
-                [512, lengths.max()]
-                ).squeeze(1)
-        features = self.norm(features)
-
-        return super().forward(
-            features= features,
-            lengths= lengths
-            )
-
-
-class Decoder(torch.nn.Module): 
-    def __init__(
-        self,
-        hyper_parameters: Namespace
-        ):
-        super().__init__()
-        self.hp = hyper_parameters
-
-        self.prenet = Conv1d(
-            in_channels= self.hp.Encoder.Size,
-            out_channels= self.hp.Decoder.Upsample.Base_Size,
-            kernel_size= self.hp.Decoder.Prenet.Kernel_Size,
-            padding= (self.hp.Decoder.Prenet.Kernel_Size - 1) // 2,
-            w_init_gain= 'linear'
-            )
-
-        self.upsample_blocks = torch.nn.ModuleList()
-        self.residual_blocks = torch.nn.ModuleList()
-        previous_channels= self.hp.Decoder.Upsample.Base_Size
-        for index, (upsample_rate, kernel_size) in enumerate(zip(
-            self.hp.Decoder.Upsample.Rate,
-            self.hp.Decoder.Upsample.Kernel_Size
-            )):
-            upsample_block = torch.nn.Sequential(
-                torch.nn.LeakyReLU(
-                    negative_slope= self.hp.Decoder.LeakyRelu_Negative_Slope
-                    ),
-                ConvTranspose1d(
-                    in_channels= previous_channels,
-                    out_channels= self.hp.Decoder.Upsample.Base_Size // (2 ** (index + 1)),
-                    kernel_size= kernel_size,
-                    stride= upsample_rate,
-                    padding= (kernel_size - upsample_rate) // 2,
-                    w_init_gain= 'leaky_relu'
-                    )
-                )
-            self.upsample_blocks.append(upsample_block)
-            residual_blocks = torch.nn.ModuleList()
-            for residual_kernel_size, residual_dilation_size in zip(
-                self.hp.Decoder.Residual_Block.Kernel_Size,
-                self.hp.Decoder.Residual_Block.Dilation_Size
-                ):
-                residual_blocks.append(Decoder_Residual_Block(
-                    channels= self.hp.Decoder.Upsample.Base_Size // (2 ** (index + 1)),
-                    kernel_size= residual_kernel_size,
-                    dilations= residual_dilation_size,
-                    negative_slope= self.hp.Decoder.LeakyRelu_Negative_Slope
-                    ))
-            self.residual_blocks.append(residual_blocks)
-            previous_channels = self.hp.Decoder.Upsample.Base_Size // (2 ** (index + 1))
-
-        self.postnet = torch.nn.Sequential(
-            torch.nn.LeakyReLU(),
-            Conv1d(
-                in_channels= previous_channels,
-                out_channels= 1,
-                kernel_size= self.hp.Decoder.Postnet.Kernel_Size,
-                padding= (self.hp.Decoder.Postnet.Kernel_Size - 1) // 2,
-                w_init_gain= 'tanh'
-                ),
-            torch.nn.Tanh(),
-            Lambda(lambda x: x.squeeze(1))
-            )
-            
-    def forward(
-        self,
-        encodings: torch.Tensor,
-        lengths: torch.Tensor,
-        ) -> torch.Tensor:
-        masks = (~Mask_Generate(lengths= lengths, max_length= torch.ones_like(encodings[0, 0]).sum())).unsqueeze(1).float()
-
-        decodings = self.prenet(encodings) * masks
-        for upsample_block, residual_blocks in zip(
-            self.upsample_blocks,
-            self.residual_blocks
-            ):
-            decodings = upsample_block(decodings)
-            decodings = torch.stack(
-                [residual_block(decodings) for residual_block in residual_blocks],
-                dim= 1
-                ).mean(dim= 1)
-            
-        predictions = self.postnet(decodings)
-
-        return predictions
-
-class Decoder_Residual_Block(torch.nn.Module):
-    def __init__(
-        self,
-        channels: int,
-        kernel_size: int,
-        dilations: Union[List, Tuple],
-        negative_slope: float= 0.1
-        ):
-        super().__init__()
-
-        self.conv = torch.nn.ModuleList()
-        for dilation in dilations:
-            conv = torch.nn.Sequential(                
-                torch.nn.LeakyReLU(negative_slope= negative_slope),
-                Conv1d(
-                    in_channels= channels,
-                    out_channels= channels,
-                    kernel_size= kernel_size,
-                    dilation= dilation,
-                    padding= (kernel_size * dilation - dilation) // 2,
-                    w_init_gain= 'leaky_relu'
-                    ),
-                torch.nn.LeakyReLU(negative_slope= negative_slope),
-                Conv1d(
-                    in_channels= channels,
-                    out_channels= channels,
-                    kernel_size= kernel_size,
-                    dilation= 1,
-                    padding= (kernel_size - 1) // 2
-                    )
-                )
-            self.conv.append(conv)
-
-    def forward(self, x):
-        for conv in self.conv:
-            x = conv(x) + x
-
-        return x
-
+def Mask_Generate(lengths: torch.Tensor, max_length: Optional[Union[int, torch.Tensor]]= None):
+    '''
+    lengths: [Batch]
+    max_lengths: an int value. If None, max_lengths == max(lengths)
+    '''
+    max_length = max_length or torch.max(lengths)
+    sequence = torch.arange(max_length)[None, :].to(lengths.device)
+    return sequence >= lengths[:, None]    # [Batch, Time]
 
 class Text_Encoder(torch.nn.Module): 
     def __init__(
@@ -518,7 +286,7 @@ class Text_Encoder(torch.nn.Module):
         self,
         tokens: torch.Tensor,
         lengths: torch.Tensor,
-        ) -> Tuple[torch.distributions.Normal, torch.Tensor]:
+        ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         '''
         tokens: [Batch, Time]
         '''
@@ -528,9 +296,9 @@ class Text_Encoder(torch.nn.Module):
             encodings = block(encodings, lengths)
 
         means, stds = self.projection(encodings).chunk(chunks= 2, dim= 1)   # [Batch, Acoustic_d, Feature_t] * 2
-        stds = torch.nn.functional.softplus(stds)
+        log_stds = torch.nn.functional.softplus(stds).log()
 
-        return means, stds, encodings
+        return means, log_stds, encodings
 
 class FFT_Block(torch.nn.Module):
     def __init__(
@@ -691,6 +459,264 @@ class FFN(torch.nn.Module):
         return x * masks
 
 
+class Decoder(torch.nn.Module): 
+    def __init__(
+        self,
+        hyper_parameters: Namespace
+        ):
+        super().__init__()
+        self.hp = hyper_parameters
+
+        self.prenet = Conv1d(
+            in_channels= self.hp.Encoder.Size,
+            out_channels= self.hp.Decoder.Upsample.Base_Size,
+            kernel_size= self.hp.Decoder.Prenet.Kernel_Size,
+            padding= (self.hp.Decoder.Prenet.Kernel_Size - 1) // 2,
+            # w_init_gain= 'leaky_relu'   # Don't use this line.
+            )
+
+        self.upsample_blocks = torch.nn.ModuleList()
+        self.residual_blocks = torch.nn.ModuleList()
+        previous_channels= self.hp.Decoder.Upsample.Base_Size
+        for index, (upsample_rate, kernel_size) in enumerate(zip(
+            self.hp.Decoder.Upsample.Rate,
+            self.hp.Decoder.Upsample.Kernel_Size
+            )):
+            current_channels = self.hp.Decoder.Upsample.Base_Size // (2 ** (index + 1))
+            upsample_block = torch.nn.Sequential(
+                torch.nn.LeakyReLU(
+                    negative_slope= self.hp.Decoder.LeakyRelu_Negative_Slope
+                    ),
+                torch.nn.utils.weight_norm(ConvTranspose1d(
+                    in_channels= previous_channels,
+                    out_channels= current_channels,
+                    kernel_size= kernel_size,
+                    stride= upsample_rate,
+                    padding= (kernel_size - upsample_rate) // 2
+                    ))
+                )
+            self.upsample_blocks.append(upsample_block)
+            residual_blocks = torch.nn.ModuleList()
+            for residual_kernel_size, residual_dilation_size in zip(
+                self.hp.Decoder.Residual_Block.Kernel_Size,
+                self.hp.Decoder.Residual_Block.Dilation_Size
+                ):
+                residual_blocks.append(Decoder_Residual_Block(
+                    channels= current_channels,
+                    kernel_size= residual_kernel_size,
+                    dilations= residual_dilation_size,
+                    negative_slope= self.hp.Decoder.LeakyRelu_Negative_Slope
+                    ))
+            self.residual_blocks.append(residual_blocks)
+
+            previous_channels = self.hp.Decoder.Upsample.Base_Size // (2 ** (index + 1))
+
+        self.postnet = torch.nn.Sequential(
+            torch.nn.LeakyReLU(),
+            Conv1d(
+                in_channels= previous_channels,
+                out_channels= 1,
+                kernel_size= self.hp.Decoder.Postnet.Kernel_Size,
+                padding= (self.hp.Decoder.Postnet.Kernel_Size - 1) // 2,
+                bias= False,
+                # w_init_gain= 'tanh' # Don't use this line.
+                ),
+            torch.nn.Tanh(),
+            Lambda(lambda x: x.squeeze(1))
+            )
+
+        # This is critical when using weight normalization.
+        def weight_norm_initialize_weight(module):
+            if 'Conv' in module.__class__.__name__:
+                module.weight.data.normal_(0.0, 0.01)
+        self.upsample_blocks.apply(weight_norm_initialize_weight)
+        self.residual_blocks.apply(weight_norm_initialize_weight)
+            
+    def forward(
+        self,
+        encodings: torch.Tensor,
+        lengths: torch.Tensor,
+        ) -> torch.Tensor:
+        masks = (~Mask_Generate(lengths= lengths, max_length= torch.ones_like(encodings[0, 0]).sum())).unsqueeze(1).float()
+
+        decodings = self.prenet(encodings) * masks
+        for upsample_block, residual_block, upsample_rate in zip(
+            self.upsample_blocks,
+            self.residual_blocks,
+            self.hp.Decoder.Upsample.Rate
+            ):
+            decodings = upsample_block(decodings)
+            lengths = lengths * upsample_rate
+            masks = (~Mask_Generate(lengths= lengths, max_length= torch.ones_like(decodings[0, 0]).sum())).unsqueeze(1).float()
+            decodings = torch.stack(
+                [block(decodings, masks) for block in residual_block],
+                # [block(decodings) for block in residual_block],
+                dim= 1
+                ).mean(dim= 1)
+            
+        predictions = self.postnet(decodings)
+
+        return predictions
+
+class Decoder_Residual_Block(torch.nn.Module):
+    def __init__(
+        self,
+        channels: int,
+        kernel_size: int,
+        dilations: Union[List, Tuple],
+        negative_slope: float= 0.1
+        ):
+        super().__init__()
+
+        self.in_convs = torch.nn.ModuleList()
+        self.out_convs = torch.nn.ModuleList()
+        for dilation in dilations:
+            self.in_convs.append(torch.nn.utils.weight_norm(Conv1d(
+                in_channels= channels,
+                out_channels= channels,
+                kernel_size= kernel_size,
+                dilation= dilation,
+                padding= (kernel_size * dilation - dilation) // 2
+                )))
+            self.out_convs.append(torch.nn.utils.weight_norm(Conv1d(
+                in_channels= channels,
+                out_channels= channels,
+                kernel_size= kernel_size,
+                dilation= 1,
+                padding= (kernel_size - 1) // 2
+                )))
+
+        self.leaky_relu = torch.nn.LeakyReLU(negative_slope= negative_slope)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        masks: torch.Tensor
+        ):
+        for in_conv, out_conv in zip(self.in_convs, self.out_convs):
+            residuals = x
+            x = self.leaky_relu(x) * masks
+            x = in_conv(x) * masks
+            x = self.leaky_relu(x) * masks
+            x = out_conv(x) * masks
+            x = x + residuals
+        
+        return x * masks
+
+
+class Feature_Encoder(torch.nn.Module): 
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        conv_stack: int,
+        kernel_size: int,
+        dilation_rate: int,
+        dropout_rate: float
+        ):
+        super().__init__()
+
+        self.prenet = Conv1d(
+            in_channels= in_channels,
+            out_channels= out_channels,
+            kernel_size= 1,
+            w_init_gain= 'linear'
+            )
+        self.wavenet = WaveNet(
+            calc_channels= out_channels,
+            conv_stack= conv_stack,
+            kernel_size= kernel_size,
+            dilation_rate= dilation_rate,
+            dropout_rate= dropout_rate,
+            )        
+        self.projection = Conv1d(
+            in_channels= out_channels,
+            out_channels= out_channels * 2,
+            kernel_size= 1,
+            w_init_gain= 'linear'
+            )
+            
+    def forward(
+        self,
+        features: torch.Tensor,
+        lengths: torch.Tensor,
+        ) -> Tuple[torch.Tensor, torch.Tensor]:
+        '''
+        features: [Batch, Feature_d, Feature_t], Spectrogram
+        lengths: [Batch]
+        '''
+        masks = (~Mask_Generate(lengths= lengths, max_length= torch.ones_like(features[0, 0]).sum())).unsqueeze(1).float()  # [Batch, 1, Feature_t]
+
+        encodings = self.prenet(features) * masks   # [Batch, Acoustic_d, Feature_t]
+        encodings = self.wavenet(encodings, masks)
+        means, stds = self.projection(encodings).chunk(chunks= 2, dim= 1)   # [Batch, Acoustic_d, Feature_t] * 2
+        log_stds = torch.nn.functional.softplus(stds).log()
+        
+        return means, log_stds
+
+class Acoustic_Encoder(Feature_Encoder):
+    def __init__(
+        self,
+        hyper_parameters: Namespace
+        ):
+        self.hp = hyper_parameters
+
+        super().__init__(
+            in_channels= self.hp.Sound.N_FFT // 2 + 1,  # Spectrogram
+            out_channels= self.hp.Encoder.Size,
+            conv_stack= self.hp.Acoustic_Encoder.Conv_Stack,
+            kernel_size= self.hp.Acoustic_Encoder.Kernel_Size,
+            dilation_rate= self.hp.Acoustic_Encoder.Dilation_Rate,
+            dropout_rate= self.hp.Acoustic_Encoder.Dropout_Rate,
+            )
+
+class Linguistic_Encoder(Feature_Encoder):
+    def __init__(
+        self,
+        hyper_parameters: Namespace
+        ):
+        self.hp = hyper_parameters
+        
+        super().__init__(
+            in_channels= 512,
+            out_channels= self.hp.Encoder.Size,
+            conv_stack= self.hp.Linguistic_Encoder.Conv_Stack,
+            kernel_size= self.hp.Linguistic_Encoder.Kernel_Size,
+            dilation_rate= self.hp.Linguistic_Encoder.Dilation_Rate,
+            dropout_rate= self.hp.Linguistic_Encoder.Dropout_Rate,
+            )
+        
+        wav2vec2 = Wav2Vec2ForCTC.from_pretrained('facebook/wav2vec2-xls-r-2b')
+        wav2vec2.freeze_feature_encoder()
+        self.feature_extractor = wav2vec2.wav2vec2.feature_extractor
+        self.norm = LayerNorm(
+            num_features= 512
+            )
+
+    def forward(
+        self,
+        audios: torch.Tensor,
+        lengths: torch.Tensor,
+        ) -> torch.distributions.Normal:
+        '''
+        audios: [Batch, Audio_t], Raw waveform
+        lengths: [Batch], * This is feature length, not waveform length.
+        '''
+        with torch.no_grad():
+            audios = torchaudio.functional.resample(audios, self.hp.Sound.Sample_Rate, 16000)
+            features = self.feature_extractor(audios)
+            features = torchvision.transforms.functional.resize(
+                features.unsqueeze(1),
+                [512, lengths.max()]
+                ).squeeze(1)
+        features = self.norm(features)
+
+        return super().forward(
+            features= features,
+            lengths= lengths
+            )
+
+
 class Variance_Block(torch.nn.Module):
     def __init__(self, hyper_parameters: Namespace):
         super().__init__()
@@ -842,8 +868,7 @@ class Token_Predictor(torch.nn.Module):
     def forward(
         self,
         encodings: torch.Tensor,
-        lengths: torch.Tensor,
-        ) -> torch.distributions.Normal:
+        ) -> torch.Tensor:
         '''
         features: [Batch, Feature_d, Feature_t], Spectrogram
         lengths: [Batch]
@@ -857,10 +882,6 @@ class Token_Predictor(torch.nn.Module):
         predictions = torch.nn.functional.log_softmax(predictions, dim= 1)
 
         return predictions
-
-        
-
-
 
 
 class Segment(torch.nn.Module):
@@ -884,13 +905,3 @@ class Segment(torch.nn.Module):
             ], dim= 0)
         
         return segments, offsets
-
-
-def Mask_Generate(lengths: torch.Tensor, max_length: int= None):
-    '''
-    lengths: [Batch]
-    max_lengths: an int value. If None, max_lengths == max(lengths)
-    '''
-    max_length = max_length or torch.max(lengths)
-    sequence = torch.arange(max_length)[None, :].to(lengths.device)
-    return sequence >= lengths[:, None]    # [Batch, Time]

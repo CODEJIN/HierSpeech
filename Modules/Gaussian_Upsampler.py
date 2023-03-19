@@ -76,7 +76,7 @@ class Gaussian_Upsampler(torch.nn.Module):
         times = torch.arange(1, times.max() + 1, device= durations.device)[None, None]  # [1, 1, Feature_t]
 
         ranges = ranges.unsqueeze(2)    # [Batch, Enc_t, 1]
-        gaussians = torch.distributions.normal.Normal(loc= duration_cumsums, scale= torch.maximum(ranges, torch.full_like(ranges, self.eps)))
+        gaussians = torch.distributions.normal.Normal(loc= duration_cumsums, scale= ranges.clamp(self.eps))
 
         alignments = gaussians.log_prob(times).exp()    # [Batch, Enc_t, Feature_t]
         alignments = alignments.masked_fill(masks.unsqueeze(2), 0.0)

@@ -23,7 +23,7 @@ class FlowBlock(torch.nn.Module):
         ):
         super().__init__()
 
-        self.flows = torch.nn.ModuleList()        
+        self.flows = torch.nn.ModuleList()
         for _ in range(flow_stack):
             self.flows.append(Flow(
                 channels= channels,
@@ -60,7 +60,7 @@ class FlowBlock(torch.nn.Module):
                 conditions= conditions,
                 reverse= reverse,
                 )
-            
+
         return x
 
 class Flow(torch.nn.Module):
@@ -81,8 +81,9 @@ class Flow(torch.nn.Module):
             in_channels= channels // 2,
             out_channels= calc_channels,
             kernel_size= 1,
-            w_init_gain= 'linear'
+            # w_init_gain= 'linear' # Don't use init. This become a reason lower quality.
             )
+        
         self.wavenet = WaveNet(
             calc_channels= calc_channels,
             conv_stack= wavenet_conv_stack,
@@ -91,6 +92,7 @@ class Flow(torch.nn.Module):
             dropout_rate= wavenet_dropout_rate,
             condition_channels= condition_channels,
             )
+        
         self.postnet = Conv1d(
             in_channels= calc_channels,
             out_channels= channels // 2,
@@ -106,7 +108,7 @@ class Flow(torch.nn.Module):
         reverse: bool= False
         ):
         x_0, x_1 = x.chunk(chunks= 2, dim= 1)   # [Batch, Dim // 2, Time] * 2
-        x_hiddens = self.prenet(x_0)  # [Batch, Calc_d, Time]
+        x_hiddens = self.prenet(x_0) * masks    # [Batch, Calc_d, Time]
         x_hiddens = self.wavenet(
             x= x_hiddens,
             masks= masks,
@@ -147,12 +149,17 @@ class WaveNet(torch.nn.Module):
         self.conv_stack = conv_stack
         self.use_condition = not condition_channels is None
 
+        def weight_norm_initialize_weight(module):
+            if 'Conv' in module.__class__.__name__:
+                module.weight.data.normal_(0.0, 0.01)
+
         if self.use_condition:
             self.condition = torch.nn.utils.weight_norm(Conv1d(
                 in_channels= condition_channels,
                 out_channels= calc_channels * conv_stack * 2,
                 kernel_size= 1
                 ))
+            self.condition.apply(weight_norm_initialize_weight)
         
         self.input_convs = torch.nn.ModuleList()
         self.residual_and_skip_convs = torch.nn.ModuleList()
@@ -164,17 +171,18 @@ class WaveNet(torch.nn.Module):
                 out_channels= calc_channels * 2,
                 kernel_size= kernel_size,
                 dilation= dilation,
-                padding= padding,
-                w_init_gain= 'gate'
+                padding= padding
                 )))
             self.residual_and_skip_convs.append(torch.nn.utils.weight_norm(Conv1d(
                 in_channels= calc_channels,
                 out_channels= calc_channels * 2,
-                kernel_size= 1,
-                w_init_gain= 'linear'
+                kernel_size= 1
                 )))
-        
+
         self.dropout = torch.nn.Dropout(p= dropout_rate)
+        
+        self.input_convs.apply(weight_norm_initialize_weight)
+        self.residual_and_skip_convs.apply(weight_norm_initialize_weight)
 
     def forward(
         self,
@@ -194,8 +202,7 @@ class WaveNet(torch.nn.Module):
         skips_list = []
         for in_conv, conditions, residual_and_skip_conv in zip(self.input_convs, conditions_list, self.residual_and_skip_convs):
             ins = in_conv(x)
-            ins_tanh, ins_sigmoid = (ins + conditions).chunk(chunks= 2, dim= 1)
-            acts = ins_tanh.tanh() * ins_sigmoid.sigmoid()
+            acts = Fused_Gate(ins + conditions)
             acts = self.dropout(acts)
             residuals, skips = residual_and_skip_conv(acts).chunk(chunks= 2, dim= 1)
             x = (x + residuals) * masks
@@ -205,12 +212,18 @@ class WaveNet(torch.nn.Module):
 
         return skips
 
-def Flow_KL_Loss(distributions, flows, flow_stds, masks):
+@torch.jit.script
+def Fused_Gate(x):
+    x_tanh, x_sigmoid = x.chunk(chunks= 2, dim= 1)
+    x = x_tanh.tanh() * x_sigmoid.sigmoid()
+
+    return x
+
+def Flow_KL_Loss(encoding_means, encoding_log_stds, flows, flow_log_stds, masks):
     masks = masks.float()
 
-    loss = distributions.scale.log() - flow_stds.log() - 0.5
-    loss += 0.5 * (flows - distributions.loc).pow(2.0) * distributions.scale.pow(-2.0)
-
-    loss = (loss * masks).sum()  / masks.sum()
-
+    loss = encoding_log_stds - flow_log_stds - 0.5
+    loss += 0.5 * (flows - encoding_means).pow(2.0) * (-2.0 * encoding_log_stds).exp()
+    loss = (loss * masks).sum() / masks.sum()
+    
     return loss

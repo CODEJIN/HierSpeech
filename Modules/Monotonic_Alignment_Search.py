@@ -6,7 +6,7 @@ import math
 
 def Calc_Duration(
     encoding_means: torch.Tensor,
-    encoding_stds: torch.Tensor,
+    encoding_log_stds: torch.Tensor,
     encoding_lengths: torch.Tensor,
     decodings: torch.Tensor,
     decoding_lengths: torch.Tensor
@@ -22,16 +22,16 @@ def Calc_Duration(
             )).unsqueeze(1).float()
         
         # negative cross-entropy
-        stds_p_sq_r = encoding_stds.pow(-2.0)  # [Batch, Enc_d, Enc_t]
-        neg_cent1 = torch.sum(-0.5 * math.log(2 * math.pi) - encoding_stds.log().clamp(min= 1e-3).log(), [1], keepdim=True) # [Batch, 1, Enc_t]
-        neg_cent2 = torch.matmul(-0.5 * (decodings ** 2).permute(0, 2, 1), stds_p_sq_r) # [Batch, Dec_t, Enc_d] x [Batch, Enc_d, Enc_t] -> [Batch, Dec_t, Enc_t]
+        stds_p_sq_r = (-2.0 * encoding_log_stds).exp()  # [Batch, Enc_d, Enc_t]
+        neg_cent1 = torch.sum(-0.5 * math.log(2.0 * math.pi) - encoding_log_stds, [1], keepdim=True) # [Batch, 1, Enc_t]
+        neg_cent2 = torch.matmul(-0.5 * (decodings ** 2.0).permute(0, 2, 1), stds_p_sq_r) # [Batch, Dec_t, Enc_d] x [Batch, Enc_d, Enc_t] -> [Batch, Dec_t, Enc_t]
         neg_cent3 = torch.matmul(decodings.permute(0, 2, 1), (encoding_means * stds_p_sq_r)) # [Batch, Dec_t, Enc_d] x [b, Enc_d, Enc_t] -> [Batch, Dec_t, Enc_t]
-        neg_cent4 = torch.sum(-0.5 * (encoding_means ** 2) * stds_p_sq_r, [1], keepdim=True) # [Batch, 1, Enc_t]
+        neg_cent4 = torch.sum(-0.5 * (encoding_means ** 2.0) * stds_p_sq_r, [1], keepdim=True) # [Batch, 1, Enc_t]
         neg_cent = neg_cent1 + neg_cent2 + neg_cent3 + neg_cent4    # [Batch, Dec_t, Enc_t]
 
         attention_masks = encoding_masks * decoding_masks.permute(0, 2, 1)  # [Batch, 1, Enc_t] x [Batch, Dec_t, 1] -> [Batch, Dec_t, Enc_t]
-        attentions = Maximum_Path_Generator(neg_cent, attention_masks).detach()
-        durations = attentions.sum(dim= 1).long()    # [Batch, Enc_t]
+        alignments = Maximum_Path_Generator(neg_cent, attention_masks).detach()
+        durations = alignments.sum(dim= 1).long()    # [Batch, Enc_t]
 
     return durations
 

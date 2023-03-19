@@ -11,7 +11,7 @@ Sound:
 
 Feature_Type: 'Mel' #'Spectrogram', 'Mel'
 
-Tokens: 104
+Tokens: 69
 
 
 Encoder:
@@ -39,7 +39,6 @@ Variance_Block:
             Dropout_Rate: 0.1
 
 Acoustic_Encoder:
-    WaveNet_Stack: 4
     Conv_Stack: 4
     Kernel_Size: 5
     Dilation_Rate: 1
@@ -59,7 +58,6 @@ Token_Predictor:
         Dropout_Rate: 0.1
     
 Linguistic_Encoder:
-    WaveNet_Stack: 4
     Conv_Stack: 4
     Kernel_Size: 5
     Dilation_Rate: 1
