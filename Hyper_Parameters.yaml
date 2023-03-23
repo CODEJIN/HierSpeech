@@ -13,7 +13,6 @@ Feature_Type: 'Mel' #'Spectrogram', 'Mel'
 
 Tokens: 69
 
-
 Encoder:
     Size: 192
     Conv:
@@ -101,7 +100,7 @@ Language_Info_Path: 'D:/Datasets/22K.LJ/Language_Info.yaml'
 Gender_Info_Path: 'D:/Datasets/22K.LJ/Gender_Info.yaml'
 Language_and_Gender_Info_by_Speaker_Path: 'D:/Datasets/22K.LJ/Language_and_Gender_Info_by_Speaker.yaml'
 Train:
-    Pattern_Cache: True
+    Pattern_Cache: true
     Train_Pattern:
         Path: 'D:/Datasets/22K.LJ/Train'
         Metadata_File: 'METADATA.PICKLE'
@@ -111,7 +110,7 @@ Train:
         Text_Length:
             Min: 1
             Max: 200
-        Accumulated_Dataset_Epoch: 1   # This is to prevent slow down from torch.utils.data.DataLoader when the number of patterns is small.
+        Accumulated_Dataset_Epoch: 1000 # This is to prevent slow down from torch.utils.data.DataLoader when the number of patterns is small.
         Augmentation_Ratio: 0.10
     Eval_Pattern:
         Path: 'D:/Datasets/22K.LJ/Eval'
@@ -126,21 +125,20 @@ Train:
     Batch_Size: 16
     Segment_Size: 32
     Learning_Rate:
-        Initial: 1.0e-4
-        Warmup_Step: 4000
+        Initial: 2.0e-4
+        Decay: 0.999875
+        STFT_Loss_Lambda: 45.0
     ADAM:
         Beta1: 0.9
         Beta2: 0.999
         Epsilon: 1.0e-7
-    Weight_Decay: 1.0e-6
-    Gradient_Norm: 1.0
-    Max_Step: 200000
-    Discrimination_Step: 0
+    Gradient_Norm: 0.0
+    Max_Step: 1000000
     Checkpoint_Save_Interval: 5000
     Logging_Interval: 1
     Evaluation_Interval: 1000
     Inference_Interval: 5000
-    Initial_Inference: false
+    Initial_Inference: true
     Inference_in_Train:
         Text: [
             'Do not kill the goose that lays the golden eggs.',
@@ -165,7 +163,7 @@ Weights_and_Biases:
         Use: false
         Interval: 50000 # Unlike local, The capacity of WandB is small.
 
-Use_Mixed_Precision: false   # Don't use mixed precision in this model.
+Use_Mixed_Precision: true   # Don't use mixed precision in this model.
 Use_Multi_GPU: false
 Device: '0'
 # Use_Multi_GPU: true

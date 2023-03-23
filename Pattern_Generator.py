@@ -7,52 +7,84 @@ from tqdm import tqdm
 import hgtk
 import logging
 from pysptk.sptk import rapt
-from typing import List, Tuple, Union
+from typing import List, Tuple, Dict, Union, Optional
 
 from phonemizer import phonemize
 from phonemizer.separator import Separator
+from unidecode import unidecode
+import unicodedata
 
 from meldataset import mel_spectrogram, spectrogram, spec_energy
 
 from Arg_Parser import Recursive_Parse
 
 using_Extension = [x.upper() for x in ['.wav', '.m4a', '.flac']]
-regex_Checker = re.compile('[가-힣A-Z,.?!\'\-\s]+')
+regex_checker = re.compile('[가-힣A-Za-z,.?!\'\-\s]+')
 top_db_dict = {'KSS': 35, 'Emotion': 30, 'AIHub': 30, 'VCTK': 15, 'Libri': 23}
 
 if __name__ == '__main__':
     ge2e_generator = torch.jit.load('ge2e.pts')
 
-def Text_Filtering(text):
-    remove_Letter_List = ['(', ')', '\"', '[', ']', ':', ';']
-    replace_List = [('  ', ' '), (' ,', ','), ('\' ', '\''), ('“', ''), ('”', ''), ('’', '\'')]
+def Text_Filtering(text: str):
+    remove_letter_list = ['(', ')', '\"', '[', ']', ':', ';']
+    replace_list = [('  ', ' '), (' ,', ','), ('\' ', '\''), ('“', ''), ('”', ''), ('’', '\'')]
 
-    text = text.upper().strip()
-    for filter in remove_Letter_List:
+    text = text.strip()
+    for filter in remove_letter_list:
         text= text.replace(filter, '')
-    for filter, replace_STR in replace_List:
+    for filter, replace_STR in replace_list:
         text= text.replace(filter, replace_STR)
 
     text= text.strip()
     
-    if len(regex_Checker.findall(text)) != 1:
+    if len(regex_checker.findall(text)) != 1:
         return None
     elif text.startswith('\''):
         return None
     else:
-        return regex_Checker.findall(text)[0]
+        return regex_checker.findall(text)[0]
 
-def Phonemize(text: Union[str, List[str]], language: str):
+whitespace_re = re.compile(r'\s+')
+english_abbreviations = [(re.compile('\\b%s\\.' % x[0], re.IGNORECASE), x[1]) for x in [
+    ('mrs', 'misess'),
+    ('mr', 'mister'),
+    ('dr', 'doctor'),
+    ('st', 'saint'),
+    ('co', 'company'),
+    ('jr', 'junior'),
+    ('maj', 'major'),
+    ('gen', 'general'),
+    ('drs', 'doctors'),
+    ('rev', 'reverend'),
+    ('lt', 'lieutenant'),
+    ('hon', 'honorable'),
+    ('sgt', 'sergeant'),
+    ('capt', 'captain'),
+    ('esq', 'esquire'),
+    ('ltd', 'limited'),
+    ('col', 'colonel'),
+    ('ft', 'fort'),
+    ]]
+def expand_abbreviations(text: str):
+    for regex, replacement in english_abbreviations:
+        text = re.sub(regex, replacement, text)
+
+    return text
+
+def Phonemize(texts: Union[str, List[str]], language: str):
+    if type(texts) == str:
+        texts = [texts]
+
     if language == 'English':
         language = 'en-us'
+        # English cleaners 2
+        texts = [text.lower() for text in texts]
+        texts = [expand_abbreviations(text) for text in texts]
     elif language == 'Korean':
         language = 'ko'
 
-    if type(text) == str:
-        text = [text]
-
     pronunciations = phonemize(
-        text,
+        texts,
         language= language,
         backend='espeak',
         separator=Separator(phone= ' ', word='|', syllable= None),
@@ -60,9 +92,10 @@ def Phonemize(text: Union[str, List[str]], language: str):
         preserve_punctuation=True,
         njobs=4
         )
-    
+    pronunciations = [re.sub(whitespace_re, ' ', pronunciation) for pronunciation in pronunciations]
+
     parsed_pronunciations = []
-    for phoneme_string in pronunciations:
+    for phoneme_string in pronunciations:        
         pronunciation = []
         for word in phoneme_string.split('|'):
             for phoneme in word.split(' '):
@@ -70,7 +103,10 @@ def Phonemize(text: Union[str, List[str]], language: str):
                     continue
                 sub_phoneme = []
                 for x in phoneme:
-                    if not x in ['?', '!', '.', ',']:
+                    if unicodedata.combining(x) and len(sub_phoneme) == 0:  # like '̩'                    
+                        pronunciation[-1] += phoneme
+                        continue
+                    elif not x in ['?', '!', '.', ',']:
                         sub_phoneme.append(x)
                     else:
                         if len(sub_phoneme) > 0:
@@ -84,18 +120,16 @@ def Phonemize(text: Union[str, List[str]], language: str):
 
         pronunciation_fix = []
         for phoneme in pronunciation:
-            if len(phoneme) > 1 and \
-                phoneme[0] in ['ɐ','e','ɛ','i','j','ɫ','n','ŋ','o','p','q','t','u','ɯ','ʌ'] and \
-                not phoneme in ['eɪ','ɛɹ','iː','iə','oː','oːɹ','oʊ','ph','tɕ','tʃ','uː',]:
+            if all([
+                len(phoneme) > 1,
+                phoneme[0] in ['ɐ','e','ɛ','i','j','ɫ','n','ŋ','o','p','q','t','u','ɯ','ʌ'],
+                not (phoneme in ['eɪ','ɛɹ','iː','iə','oː','oːɹ','oʊ','ph','tɕ','tʃ','uː',]),
+                not unicodedata.combining(phoneme[-1])
+                ]):
                 pronunciation_fix.extend([phoneme[0], phoneme[1:]])
             else:
                 pronunciation_fix.append(phoneme)
         pronunciation = pronunciation_fix
-
-        if '' in pronunciation:
-            print(phoneme_string)
-            print(pronunciation)
-            assert False
 
         parsed_pronunciations.append(pronunciation)
 
@@ -166,7 +200,7 @@ def Pattern_Generate(
 
     return audio, spect, mel, log_f0, log_energy
 
-def Pattern_File_Generate(path, speaker, emotion, language, gender, dataset, text, pronunciation, tag='', eval= False):
+def Pattern_File_Generate(path: str, speaker: str, emotion: str, language: str, gender: str, dataset: str, text: str, pronunciation: str, tag: str='', eval: bool= False):
     pattern_path = hp.Train.Eval_Pattern.Path if eval else hp.Train.Train_Pattern.Path
 
     file = '{}.{}{}.PICKLE'.format(
@@ -224,7 +258,7 @@ def Pattern_File_Generate(path, speaker, emotion, language, gender, dataset, tex
     with open(file, 'wb') as f:
         pickle.dump(new_Pattern_dict, f, protocol=4)
 
-def Emotion_Info_Load(path):
+def Emotion_Info_Load(path: str):
     '''
     ema, emb, emf, emg, emh, nea, neb, nec, ned, nee, nek, nel, nem, nen, neo
     1-100: Neutral
@@ -258,7 +292,7 @@ def Emotion_Info_Load(path):
     paths = list(text_dict.keys())
 
     pronunciations = Phonemize(
-        text= [text_dict[path] for path in paths],
+        texts= [text_dict[path] for path in paths],
         language= 'Korean'
         )    
     pronunciation_dict = {path: pronunciation for path, pronunciation in zip(paths, pronunciations)}
@@ -323,7 +357,7 @@ def Emotion_Info_Load(path):
     print('Emotion info generated: {}'.format(len(paths)))
     return paths, text_dict, pronunciation_dict, speaker_dict, emotion_dict, language_dict, gender_dict
 
-def KSS_Info_Load(path):
+def KSS_Info_Load(path: str):
     '''
     all neutral
     '''
@@ -340,7 +374,7 @@ def KSS_Info_Load(path):
         text_dict[file] = text
 
     pronunciations = Phonemize(
-        text= [text_dict[path] for path in paths],
+        texts= [text_dict[path] for path in paths],
         language= 'Korean'
         )    
     pronunciation_dict = {path: pronunciation for path, pronunciation in zip(paths, pronunciations)}
@@ -365,7 +399,7 @@ def KSS_Info_Load(path):
     print('KSS info generated: {}'.format(len(paths)))
     return paths, text_dict, pronunciation_dict, speaker_dict, emotion_dict, language_dict, gender_dict
 
-def AIHub_Info_Load(path):
+def AIHub_Info_Load(path: str):
     emotion_label_dict = {
         'Neutrality': 'Neutral'
         }
@@ -403,7 +437,7 @@ def AIHub_Info_Load(path):
         info['Path']: info['Text']  for info in info_dict.values()
         }
     pronunciations = Phonemize(
-        text= [text_dict[path] for path in paths],
+        texts= [text_dict[path] for path in paths],
         language= 'Korean'
         )    
     pronunciation_dict = {path: pronunciation for path, pronunciation in zip(paths, pronunciations)}
@@ -425,7 +459,19 @@ def AIHub_Info_Load(path):
     print('AIHub info generated: {}'.format(len(paths)))
     return paths, text_dict, pronunciation_dict, speaker_dict, emotion_dict, language_dict, gender_dict
 
-def Basic_Info_Load(path, dataset_label, language= None, gender= None):
+def Basic_Info_Load(
+    path: str,
+    dataset_label: str,
+    language: Optional[Union[str, Dict[str, str]]]= None,
+    gender: Optional[Union[str, Dict[str, str]]]= None
+    ):
+    '''
+    This is to use a customized dataset.
+    path: Dataset path. In the path, there must be a 'script.txt' file. 'script.txt' must have the following structure: 'Path\tScript\tSpeaker\tEmotion'.
+    dataset_label: The lable of dataset
+    language: The language of dataset or speaker. When dataset is multi language, this parameter is dictionary that key and value are speaker and language, resplectly.
+    gender: The gender of dataset or speaker. When dataset is multi language, this parameter is dictionary that key and value are speaker and gender, resplectly.
+    '''
     paths = []
     for root, _, files in os.walk(path):
         for file in files:
@@ -440,6 +486,8 @@ def Basic_Info_Load(path, dataset_label, language= None, gender= None):
 
     for line in open(os.path.join(path, 'scripts.txt').replace('\\', '/'), 'r', encoding= 'utf-8-sig').readlines()[1:]:
         file, text, speaker, emotion = line.strip().split('\t')
+        if (type(language) == str and language == 'English') or (type(language) == dict and language[speaker] == 'English'):
+            text = unidecode(text)  # When English script, unidecode called.
         text = Text_Filtering(text)
         if text is None:
             continue
@@ -472,7 +520,7 @@ def Basic_Info_Load(path, dataset_label, language= None, gender= None):
     for language in set(language_dict.values()):
         language_paths = [path for path in paths if language_dict[path] == language]
         language_pronunciations = Phonemize(
-            text= [text_dict[path] for path in language_paths],
+            texts= [text_dict[path] for path in language_paths],
             language= language
             )
         pronunciation_dict.update({
@@ -484,7 +532,7 @@ def Basic_Info_Load(path, dataset_label, language= None, gender= None):
     return paths, text_dict, pronunciation_dict, speaker_dict, emotion_dict, language_dict, gender_dict
 
 
-def VCTK_Info_Load(path):
+def VCTK_Info_Load(path: str):
     '''
     VCTK v0.92 is distributed as flac files.
     '''
@@ -503,16 +551,15 @@ def VCTK_Info_Load(path):
     for path in paths:
         if 'p315'.upper() in path.upper():  #Officially, 'p315' text is lost in VCTK dataset.
             continue
-        text = Text_Filtering(open(path.replace('wav48', 'txt').replace('flac', 'txt'), 'r').readlines()[0])
+        text = Text_Filtering(unidecode(open(path.replace('wav48', 'txt').replace('flac', 'txt'), 'r').readlines()[0]))
         if text is None:
             continue
-        text = text.upper()
         
         text_dict[path] = text
             
     paths = list(text_dict.keys())
     pronunciations = Phonemize(
-        text= [text_dict[path] for path in paths],
+        texts= [text_dict[path] for path in paths],
         language= 'English'
         )    
     pronunciation_dict = {path: pronunciation for path, pronunciation in zip(paths, pronunciations)}
@@ -645,7 +692,7 @@ def VCTK_Info_Load(path):
 
     return paths, text_dict, pronunciation_dict, speaker_dict, emotion_dict, language_dict, gender_dict
 
-def Libri_Info_Load(path):
+def Libri_Info_Load(path: str):
     gender_path = os.path.join(path, 'Gender.txt').replace('\\', '/')
 
     paths = []
@@ -658,16 +705,15 @@ def Libri_Info_Load(path):
 
     text_dict = {}
     for path in paths:
-        text = Text_Filtering(open('{}.normalized.txt'.format(os.path.splitext(path)[0]), 'r', encoding= 'utf-8-sig').readlines()[0])
+        text = Text_Filtering(unidecode(open('{}.normalized.txt'.format(os.path.splitext(path)[0]), 'r', encoding= 'utf-8-sig').readlines()[0]))
         if text is None:
             continue
-        text = text.upper()
         
         text_dict[path] = text
 
     paths = list(text_dict.keys())
     pronunciations = Phonemize(
-        text= [text_dict[path] for path in paths],
+        texts= [text_dict[path] for path in paths],
         language= 'English'
         )    
     pronunciation_dict = {path: pronunciation for path, pronunciation in zip(paths, pronunciations)}
@@ -691,7 +737,7 @@ def Libri_Info_Load(path):
     print('Libri info generated: {}'.format(len(paths)))
     return paths, text_dict, pronunciation_dict, speaker_dict, emotion_dict, language_dict, gender_dict
 
-def LJ_Info_Load(path):
+def LJ_Info_Load(path: str):
     paths = []
     for root, _, files in os.walk(path):
         for file in files:
@@ -703,10 +749,9 @@ def LJ_Info_Load(path):
     text_dict = {}
     for line in open(os.path.join(path, 'metadata.csv').replace('\\', '/'), 'r', encoding= 'utf-8-sig').readlines():
         line = line.strip().split('|')        
-        text = Text_Filtering(line[2].strip())
+        text = Text_Filtering(unidecode(line[2].strip()))
         if text is None:
             continue
-        text = text.upper()
         wav_path = os.path.join(path, 'wavs', '{}.wav'.format(line[0]))
         
         text_dict[wav_path] = text
@@ -714,7 +759,7 @@ def LJ_Info_Load(path):
     paths = list(text_dict.keys())
 
     pronunciations = Phonemize(
-        text= [text_dict[path] for path in paths],
+        texts= [text_dict[path] for path in paths],
         language= 'English'
         )    
     pronunciation_dict = {path: pronunciation for path, pronunciation in zip(paths, pronunciations)}
@@ -731,12 +776,12 @@ def LJ_Info_Load(path):
     return paths, text_dict, pronunciation_dict, speaker_dict, emotion_dict, language_dict, gender_dict
 
 
-def Split_Eval(paths, eval_ratio= 0.001, min_Eval= 1):
+def Split_Eval(paths: List[str], eval_ratio: float= 0.001, min_eval: int= 1):
     shuffle(paths)
-    index = max(int(len(paths) * eval_ratio), min_Eval)
+    index = max(int(len(paths) * eval_ratio), min_eval)
     return paths[index:], paths[:index]
 
-def Metadata_Generate(eval= False):
+def Metadata_Generate(eval: bool= False):
     pattern_path = hp.Train.Eval_Pattern.Path if eval else hp.Train.Train_Pattern.Path
     metadata_File = hp.Train.Eval_Pattern.Metadata_File if eval else hp.Train.Train_Pattern.Metadata_File
 
@@ -923,12 +968,12 @@ def Metadata_Generate(eval= False):
 
     print('Metadata generate done.')
 
-def Token_dict_Generate(tokens):
+def Token_dict_Generate(tokens: Union[List[str], str]):
     tokens = ['<S>', '<E>', '<P>'] + sorted(list(tokens))        
     token_dict = {token: index for index, token in enumerate(tokens)}
     
     os.makedirs(os.path.dirname(hp.Token_Path), exist_ok= True)    
-    yaml.dump(token_dict, open(hp.Token_Path, 'w', encoding='utf-8-sig'))
+    yaml.dump(token_dict, open(hp.Token_Path, 'w', encoding='utf-8-sig'), allow_unicode= True)
 
     return token_dict
 

@@ -3,6 +3,7 @@ import torch
 import numpy as np
 import pickle, os, logging
 from typing import Dict, List, Optional
+import functools
 
 from Pattern_Generator import Text_Filtering, Phonemize
 from Modules.Nvidia_Alignment_Leraning_Framework import Attention_Prior_Generator
@@ -66,7 +67,6 @@ class Dataset(torch.utils.data.Dataset):
         self.token_dict = token_dict
         self.feature_type = feature_type
         self.pattern_path = pattern_path
-        self.use_pattern_cache = use_pattern_cache
         
         if feature_type == 'Mel':
             feature_length_dict = 'Mel_Length_Dict'
@@ -101,29 +101,50 @@ class Dataset(torch.utils.data.Dataset):
         self.attention_prior_generator = Attention_Prior_Generator()
 
         if use_pattern_cache:
-            self.real_pattern_count = len(self.patterns) // accumulated_dataset_epoch
-            self.pattern_cache_dict = {}
+            self.Pattern_LRU_Cache = functools.lru_cache(maxsize= None)(self.Pattern_LRU_Cache)
 
+    
+    # def __getitem__(self, idx):
+    #     if self.use_pattern_cache and (idx % self.real_pattern_count) in self.pattern_cache_dict.keys():
+    #         return self.pattern_cache_dict[idx % self.real_pattern_count]
+
+    #     path = os.path.join(self.pattern_path, self.patterns[idx]).replace('\\', '/')
+    #     pattern_dict = pickle.load(open(path, 'rb'))
+        
+    #     token = ['<P>'] * (len(pattern_dict['Pronunciation']) * 2 - 1)
+    #     token[0::2] = pattern_dict['Pronunciation']
+    #     token = Text_to_Token(token, self.token_dict)
+    #     feature = pattern_dict[self.feature_type]
+    #     attention_prior = self.attention_prior_generator.get_prior(feature.shape[0], token.shape[0])
+        
+    #     pattern = token, feature, pattern_dict['Audio'], pattern_dict['Spectrogram'], attention_prior
+
+    #     if self.use_pattern_cache:
+    #         self.pattern_cache_dict[idx % self.real_pattern_count] = pattern
+
+    #     return pattern
     def __getitem__(self, idx):
-        if self.use_pattern_cache and (idx % self.real_pattern_count) in self.pattern_cache_dict.keys():
-            return self.pattern_cache_dict[idx % self.real_pattern_count]
-
         path = os.path.join(self.pattern_path, self.patterns[idx]).replace('\\', '/')
+        token, feature, audio, spectrogram = self.Pattern_LRU_Cache(path)
+        attention_prior = self.attention_prior_generator.get_prior(feature.shape[0], token.shape[0])
+
+        return token, feature, audio, spectrogram, attention_prior
+    
+    def Pattern_LRU_Cache(self, path: str):
         pattern_dict = pickle.load(open(path, 'rb'))
         
-        token = Text_to_Token(pattern_dict['Pronunciation'], self.token_dict)
+        token = ['<P>'] * (len(pattern_dict['Pronunciation']) * 2 - 1)
+        token[0::2] = pattern_dict['Pronunciation']
+        token = Text_to_Token(token, self.token_dict)
         feature = pattern_dict[self.feature_type]
-        attention_prior = self.attention_prior_generator.get_prior(feature.shape[0], token.shape[0])
         
-        pattern = token, feature, pattern_dict['Audio'], pattern_dict['Spectrogram'], attention_prior
-
-        if self.use_pattern_cache:
-            self.pattern_cache_dict[idx % self.real_pattern_count] = pattern
-
-        return pattern
+        return token, feature, pattern_dict['Audio'], pattern_dict['Spectrogram']
 
     def __len__(self):
         return len(self.patterns)
+
+
+    
 
 class Inference_Dataset(torch.utils.data.Dataset):
     def __init__(
@@ -148,7 +169,11 @@ class Inference_Dataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         text, pronunciation = self.patterns[idx]
 
-        return Text_to_Token(pronunciation, self.token_dict), text, pronunciation
+        token = ['<P>'] * (len(pronunciation) * 2 - 1)
+        token[0::2] = pronunciation
+        token = Text_to_Token(token, self.token_dict)
+
+        return token, text, pronunciation
 
     def __len__(self):
         return len(self.patterns)

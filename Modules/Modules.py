@@ -540,7 +540,7 @@ class Decoder(torch.nn.Module):
         masks = (~Mask_Generate(lengths= lengths, max_length= torch.ones_like(encodings[0, 0]).sum())).unsqueeze(1).float()
 
         decodings = self.prenet(encodings) * masks
-        for upsample_block, residual_block, upsample_rate in zip(
+        for upsample_block, residual_blocks, upsample_rate in zip(
             self.upsample_blocks,
             self.residual_blocks,
             self.hp.Decoder.Upsample.Rate
@@ -549,7 +549,7 @@ class Decoder(torch.nn.Module):
             lengths = lengths * upsample_rate
             masks = (~Mask_Generate(lengths= lengths, max_length= torch.ones_like(decodings[0, 0]).sum())).unsqueeze(1).float()
             decodings = torch.stack(
-                [block(decodings, masks) for block in residual_block],
+                [block(decodings, masks) for block in residual_blocks],
                 # [block(decodings) for block in residual_block],
                 dim= 1
                 ).mean(dim= 1)

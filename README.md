@@ -22,6 +22,7 @@ Badlani, R., Łańcucki, A., Shih, K. J., Valle, R., Ping, W., & Catanzaro, B. (
     * By this change, positional encoding is removed.
 * Discriminator
     * According to the advice of the paper [author](https://github.com/sh-lee-prml), **scale discriminator** and **multi stft discriminator** were applied as discriminators.
+    * To prevent discriminator win, the gradient penalty is applied by R1 regularization.
 * One of mel or spectrogram is can be selected as a feature type.
 
 # Supported dataset
