@@ -3,6 +3,8 @@ import numpy as np
 from numba import jit
 import math
 
+from typing import Tuple
+
 
 def Calc_Duration(
     encoding_means: torch.Tensor,
@@ -10,7 +12,7 @@ def Calc_Duration(
     encoding_lengths: torch.Tensor,
     decodings: torch.Tensor,
     decoding_lengths: torch.Tensor
-    ):
+    )-> Tuple[torch.Tensor, torch.Tensor]:
     with torch.no_grad():
         encoding_masks = (~Mask_Generate(
             lengths= encoding_lengths,
@@ -30,12 +32,12 @@ def Calc_Duration(
         neg_cent = neg_cent1 + neg_cent2 + neg_cent3 + neg_cent4    # [Batch, Dec_t, Enc_t]
 
         attention_masks = encoding_masks * decoding_masks.permute(0, 2, 1)  # [Batch, 1, Enc_t] x [Batch, Dec_t, 1] -> [Batch, Dec_t, Enc_t]
-        alignments = Maximum_Path_Generator(neg_cent, attention_masks).detach()
-        durations = alignments.sum(dim= 1).long()    # [Batch, Enc_t]
+        alignments = Maximum_Path_Generator(neg_cent, attention_masks).detach() # [Batch, Feature_t, Enc_t]
+        durations = alignments.sum(dim= 1)  # [Batch, Enc_t]
 
-    return durations
+    return durations, alignments
 
-def Maximum_Path_Generator(neg_cent, mask):
+def Maximum_Path_Generator(neg_cent, mask) -> torch.Tensor:
     '''
     x: [Batch, Dec_t, Enc_t]
     mask: [Batch, Dec_t, Enc_t]
@@ -84,7 +86,7 @@ def Calc_Path(x, token_length, feature_length):
 
     return path
 
-def Mask_Generate(lengths: torch.Tensor, max_length: int= None):
+def Mask_Generate(lengths: torch.Tensor, max_length: int= None) -> torch.Tensor:
     '''
     lengths: [Batch]
     max_lengths: an int value. If None, max_lengths == max(lengths)

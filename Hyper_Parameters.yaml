@@ -27,15 +27,11 @@ Encoder:
             Kernel_Size: 9
             Dropout_Rate: 0.1
 
-Variance_Block:
-    Duration_Predictor:
-        Stack: 2
-        Dropout_Rate: 0.1
-    Gaussian_Upsampler:
-        Kernel_Size: 3
-        Range_Predictor:
-            Stack: 2
-            Dropout_Rate: 0.1
+Duration_Predictor:
+    Kernel_Size: 3
+    Conv_Stack: 3
+    Flow_Stack: 4
+    Dropout_Rate: 0.5
 
 Acoustic_Encoder:
     Conv_Stack: 4
@@ -110,7 +106,7 @@ Train:
         Text_Length:
             Min: 1
             Max: 200
-        Accumulated_Dataset_Epoch: 1000 # This is to prevent slow down from torch.utils.data.DataLoader when the number of patterns is small.
+        Accumulated_Dataset_Epoch: 1 # This is to prevent slow down from torch.utils.data.DataLoader when the number of patterns is small.
         Augmentation_Ratio: 0.10
     Eval_Pattern:
         Path: 'D:/Datasets/22K.LJ/Eval'
