@@ -220,7 +220,6 @@ class Trainer:
         attention_priors = attention_priors.to(self.device, non_blocking=True)
 
         with torch.cuda.amp.autocast(enabled= self.hp.Use_Mixed_Precision):
-            audios.requires_grad_() # to calculate gradient penalty.
             audio_predictions_slice, audios_slice, features_slice, token_predictions, \
             encoding_means, encoding_log_stds, linguistic_flows, linguistic_log_stds, \
             linguistic_means, linguistic_log_stds, acoustic_flows, acoustic_log_stds, \
@@ -233,6 +232,7 @@ class Trainer:
                 linear_spectrograms= linear_spectrograms,
                 attention_priors= attention_priors
                 )
+            audios_slice.requires_grad_() # to calculate gradient penalty.
             feature_predictions_slice = mel_spectrogram(
                 audio_predictions_slice,
                 n_fft= self.hp.Sound.N_FFT,
@@ -248,7 +248,7 @@ class Trainer:
             discriminations_list_for_fake, _ = self.model_dict['Discriminator'](audio_predictions_slice.detach())
             with torch.cuda.amp.autocast(enabled= False):
                 loss_dict['Discrimination'] = Discriminator_Loss(discriminations_list_for_real, discriminations_list_for_fake)
-                loss_dict['R1'] = self.criterion_dict['R1'](discriminations_list_for_real, audios)
+                loss_dict['R1'] = self.criterion_dict['R1'](discriminations_list_for_real, audios_slice)
 
         self.optimizer_dict['Discriminator'].zero_grad()
         self.scaler.scale(loss_dict['Discrimination'] + loss_dict['R1']).backward()
@@ -393,7 +393,6 @@ class Trainer:
         attention_priors = attention_priors.to(self.device, non_blocking=True)
 
         with torch.cuda.amp.autocast(enabled= self.hp.Use_Mixed_Precision):
-            audios.requires_grad_() # to calculate gradient penalty.
             audio_predictions_slice, audios_slice, features_slice, token_predictions, \
             encoding_means, encoding_log_stds, linguistic_flows, linguistic_log_stds, \
             linguistic_means, linguistic_log_stds, acoustic_flows, acoustic_log_stds, \
@@ -405,6 +404,7 @@ class Trainer:
                 audios= audios,
                 linear_spectrograms= linear_spectrograms
                 )
+            audios_slice.requires_grad_() # to calculate gradient penalty.
             feature_predictions_slice = mel_spectrogram(
                 audio_predictions_slice,
                 n_fft= self.hp.Sound.N_FFT,
@@ -430,7 +430,7 @@ class Trainer:
                     ).to(features.device)
 
                 loss_dict['Discrimination'] = Discriminator_Loss(discriminations_list_for_real, discriminations_list_for_fake)
-                loss_dict['R1'] = self.criterion_dict['R1'](discriminations_list_for_real, audios)
+                loss_dict['R1'] = self.criterion_dict['R1'](discriminations_list_for_real, audios_slice)
                 loss_dict['STFT'] = self.criterion_dict['MAE'](
                     feature_predictions_slice,
                     features_slice

@@ -3,4 +3,7 @@ matplotlib
 tensorboard
 torch
 wandb
-phonimizer
+phonemizer
+unidecode
+tqdm
+pyworld
