@@ -114,7 +114,7 @@ class HierSpeech(torch.nn.Module):
             encoding_means= encoding_means,
             encoding_log_stds= encoding_log_stds,
             encoding_lengths= token_lengths,
-            decodings= acoustic_flows,
+            decodings= linguistic_flows,
             decoding_lengths= feature_lengths,
             )
         _, duration_losses = self.variance_block(
