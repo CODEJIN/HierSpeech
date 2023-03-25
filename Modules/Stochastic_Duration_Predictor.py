@@ -301,7 +301,7 @@ class ConvFlow(torch.nn.Module):
             )
 
         x = torch.cat([x_0, x_1], dim= 1) * masks        
-        logdet = (logabsdet * masks).sum(dim= [1, 2])
+        logdet = (logabsdet * masks.squeeze(1)).sum(dim= [1, 2])
 
         return x, logdet
 
