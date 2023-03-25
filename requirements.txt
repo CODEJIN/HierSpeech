@@ -6,4 +6,6 @@ wandb
 phonemizer
 unidecode
 tqdm
+hgtk
+pysptk
 pyworld

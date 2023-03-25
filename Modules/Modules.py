@@ -5,8 +5,8 @@ from typing import Optional, List, Dict, Tuple, Union
 
 from transformers import Wav2Vec2ForCTC
 
-from .Nvidia_Alignment_Leraning_Framework import Alignment_Learning_Framework
-from .Gaussian_Upsampler import Gaussian_Upsampler
+from .Monotonic_Alignment_Search import Calc_Duration
+from .Stochastic_Duration_Predictor import Stochastic_Duration_Predictor
 from .Flow import FlowBlock, WaveNet
 from .Layer import Conv1d, ConvTranspose1d, Linear, Lambda, LayerNorm
 
@@ -48,10 +48,6 @@ class HierSpeech(torch.nn.Module):
             flow_wavenet_dropout_rate= self.hp.Acoustic_Flow.Dropout_Rate
             )
 
-        self.alignment_learning_framework = Alignment_Learning_Framework(
-            feature_size= feature_size,
-            encoding_size= self.hp.Encoder.Size
-            )
         self.variance_block = Variance_Block(self.hp)
 
         self.token_predictor = Token_Predictor(self.hp)
@@ -65,8 +61,7 @@ class HierSpeech(torch.nn.Module):
         features: torch.FloatTensor= None,
         feature_lengths: torch.Tensor= None,
         audios: torch.Tensor= None,
-        linear_spectrograms: torch.Tensor= None,        
-        attention_priors: torch.Tensor= None,
+        linear_spectrograms: torch.Tensor= None,
         length_scales: Union[float, List[float], torch.Tensor]= 1.0,
         ):
         if not features is None and not feature_lengths is None:    # train
@@ -77,7 +72,6 @@ class HierSpeech(torch.nn.Module):
                 feature_lengths= feature_lengths,
                 audios= audios,
                 linear_spectrograms= linear_spectrograms,
-                attention_priors= attention_priors,
                 )
         else:   #  inference
             return self.Inference(
@@ -94,7 +88,6 @@ class HierSpeech(torch.nn.Module):
         feature_lengths: torch.Tensor,
         audios: torch.Tensor,
         linear_spectrograms: torch.Tensor,
-        attention_priors: torch.Tensor,
         ):
         encoding_means, encoding_log_stds, encodings = self.text_encoder(
             tokens= tokens,
@@ -117,22 +110,21 @@ class HierSpeech(torch.nn.Module):
             reverse= False
             )   # [Batch, Enc_d, Feature_t]
 
-        durations, attention_softs, attention_hards, attention_logprobs = self.alignment_learning_framework(
-            token_embeddings= self.text_encoder.token_embedding(tokens).permute(0, 2, 1),
-            encodings= encodings,
+        durations, alignments = Calc_Duration(
+            encoding_means= encoding_means,
+            encoding_log_stds= encoding_log_stds,
             encoding_lengths= token_lengths,
-            features= features,
-            feature_lengths= feature_lengths,
-            attention_priors= attention_priors
+            decodings= linguistic_flows,
+            decoding_lengths= feature_lengths,
             )
-        alignments, log_duration_predictions, durations = self.variance_block(
+        _, duration_losses = self.variance_block(
             encodings= encodings,
             encoding_lengths= token_lengths,
             durations= durations
             )
-        
-        encoding_means = encoding_means @ alignments
-        encoding_log_stds = encoding_log_stds @ alignments
+
+        encoding_means = encoding_means @ alignments.permute(0, 2, 1)
+        encoding_log_stds = encoding_log_stds @ alignments.permute(0, 2, 1)
 
         acoustic_samples_slice, offsets = self.segment(
             patterns= acoustic_samples.permute(0, 2, 1),
@@ -167,7 +159,7 @@ class HierSpeech(torch.nn.Module):
             audio_predictions_slice, audios_slice, features_slice, token_predictions, \
             encoding_means, encoding_log_stds, linguistic_flows, linguistic_log_stds, \
             linguistic_means, linguistic_log_stds, acoustic_flows, acoustic_log_stds, \
-            attention_softs, attention_hards, attention_logprobs, log_duration_predictions, durations
+            duration_losses, alignments
 
     def Inference(
         self,
@@ -181,19 +173,16 @@ class HierSpeech(torch.nn.Module):
             tokens= tokens,
             lengths= token_lengths
             )
-   
-        alignments, _, durations = self.variance_block(
+        
+        alignments, _ = self.variance_block(
             encodings= encodings,
             encoding_lengths= token_lengths,
             length_scales= length_scales
             )
-        feature_lengths = torch.stack([
-            duration[:token_length].sum()
-            for duration, token_length in zip(durations, token_lengths)
-            ])
+        feature_lengths = alignments.sum(dim= [1, 2])
         
-        encoding_means = encoding_means @ alignments
-        encoding_log_stds = encoding_log_stds @ alignments
+        encoding_means = encoding_means @ alignments.permute(0, 2, 1)
+        encoding_log_stds = encoding_log_stds @ alignments.permute(0, 2, 1)
         encoding_samples = encoding_means + encoding_log_stds.exp() * torch.randn_like(encoding_log_stds)
 
         linguistic_samples = self.linguistic_flow(
@@ -217,7 +206,7 @@ class HierSpeech(torch.nn.Module):
             audio_predictions, None, None, None, \
             None, None, None, None, \
             None, None, None, None, \
-            None, None, None, None, durations
+            None, alignments
 
     def Scale_to_Tensor(
         self,
@@ -239,15 +228,6 @@ class HierSpeech(torch.nn.Module):
                 raise ValueError(f'When scale is a tensor, the dimension 1 of tensor must be same to the token length: {scale.size(1)} != {tokens.size(1)}')
 
         return scale.to(tokens.device)
-
-def Mask_Generate(lengths: torch.Tensor, max_length: Optional[Union[int, torch.Tensor]]= None):
-    '''
-    lengths: [Batch]
-    max_lengths: an int value. If None, max_lengths == max(lengths)
-    '''
-    max_length = max_length or torch.max(lengths)
-    sequence = torch.arange(max_length)[None, :].to(lengths.device)
-    return sequence >= lengths[:, None]    # [Batch, Time]
 
 class Text_Encoder(torch.nn.Module): 
     def __init__(
@@ -508,8 +488,7 @@ class Decoder(torch.nn.Module):
                     negative_slope= self.hp.Decoder.LeakyRelu_Negative_Slope
                     ))
             self.residual_blocks.append(residual_blocks)
-
-            previous_channels = self.hp.Decoder.Upsample.Base_Size // (2 ** (index + 1))
+            previous_channels = current_channels
 
         self.postnet = torch.nn.Sequential(
             torch.nn.LeakyReLU(),
@@ -722,45 +701,56 @@ class Variance_Block(torch.nn.Module):
         super().__init__()
         self.hp = hyper_parameters
 
-        self.duration_predictor = Duration_Predictor(self.hp)
-
-        self.gaussian_upsampler = Gaussian_Upsampler(
-            encoding_channels= self.hp.Encoder.Size,
-            kernel_size= self.hp.Variance_Block.Gaussian_Upsampler.Kernel_Size,
-            range_lstm_stack= self.hp.Variance_Block.Gaussian_Upsampler.Range_Predictor.Stack,
-            range_dropout_rate= self.hp.Variance_Block.Gaussian_Upsampler.Range_Predictor.Dropout_Rate
+        self.duration_predictor = Stochastic_Duration_Predictor(
+            channels= self.hp.Encoder.Size,
+            calc_channels= self.hp.Encoder.Size,
+            kernel_size= self.hp.Duration_Predictor.Kernel_Size,
+            conv_stack= self.hp.Duration_Predictor.Conv_Stack,
+            flow_stack= self.hp.Duration_Predictor.Flow_Stack,
+            dropout_rate= self.hp.Duration_Predictor.Dropout_Rate,
             )
 
     def forward(
         self,
         encodings: torch.Tensor,
         encoding_lengths: torch.Tensor,
-        durations: torch.Tensor= None,  # None when inference
-        length_scales: torch.Tensor= None,  # None when training
+        durations: Optional[torch.Tensor]= None,
+        length_scales: Optional[torch.Tensor]= None,  # None when training
         ):
-        encodings = encodings.detach()
-        log_duration_predictions = self.duration_predictor(
-            encodings= encodings,
-            encoding_lengths= encoding_lengths
-            )   # [Batch, Enc_t]
+        if not durations is None:
+            alignments = None
+            _, duration_loss = self.duration_predictor(
+                encodings= encodings,
+                encoding_lengths= encoding_lengths,
+                durations= durations,            
+                reverse= False
+                )
+        else:
+            duration_loss = None
+            durations, _ = self.duration_predictor(
+                encodings= encodings,
+                encoding_lengths= encoding_lengths,
+                reverse= True
+                )
+            if not length_scales is None:
+                durations = durations * length_scales
+            alignments = self.Length_Regulate(durations)
+
+        return alignments, duration_loss
+    
+    def Length_Regulate(self, durations):
+        """If target=None, then predicted durations are applied"""
+        repeats = (durations.float() + 0.5).long()
+        decoding_lengths = repeats.sum(dim=1)
+
+        max_decoding_length = decoding_lengths.max()
+        reps_cumsum = torch.cumsum(torch.nn.functional.pad(repeats, (1, 0, 0, 0), value=0.0), dim=1)[:, None, :]
+
+        range_ = torch.arange(max_decoding_length)[None, :, None].to(durations.device)
+        alignments = ((reps_cumsum[:, :, :-1] <= range_) &
+                (reps_cumsum[:, :, 1:] > range_))
         
-        if not length_scales is None:
-            log_duration_predictions = (((log_duration_predictions.exp() - 1) * length_scales) + 1).log()
-        
-        if durations is None:
-            durations = (log_duration_predictions.exp() - 1).ceil().long() # [Batch, Enc_t]
-            max_duration_sum = durations.sum(dim= 1).max()
-
-            for duration, length in zip(durations, encoding_lengths):
-                duration[length - 1] = duration[length - 1] + max_duration_sum - duration.sum()
-
-        alignments = self.gaussian_upsampler(
-            encodings= encodings,
-            encoding_lengths= encoding_lengths,
-            durations= durations
-            )   # [Batch, Enc_t, Feature_t]
-
-        return alignments, log_duration_predictions, durations
+        return alignments.float()
 
 class Variance_Predictor(torch.nn.Module):
     def __init__(
@@ -824,21 +814,6 @@ class Variance_Predictor(torch.nn.Module):
         variances = self.projection(encodings)  # [Batch, Enc_t]
 
         return variances
-
-class Duration_Predictor(Variance_Predictor):
-    def __init__(self, hyper_parameters: Namespace):        
-        self.hp = hyper_parameters
-        super().__init__(
-            in_features= self.hp.Encoder.Size,
-            lstm_features= self.hp.Encoder.Size // 2,
-            lstm_stack= self.hp.Variance_Block.Duration_Predictor.Stack,
-            dropout_rate= self.hp.Variance_Block.Duration_Predictor.Dropout_Rate
-            )
-
-    def forward(self, encodings: torch.Tensor, encoding_lengths: torch.Tensor):
-        log_duration_predictions = super().forward(encodings, encoding_lengths)
-
-        return log_duration_predictions
 
 
 class Token_Predictor(torch.nn.Module): 
@@ -905,3 +880,12 @@ class Segment(torch.nn.Module):
             ], dim= 0)
         
         return segments, offsets
+
+def Mask_Generate(lengths: torch.Tensor, max_length: Optional[Union[int, torch.Tensor]]= None):
+    '''
+    lengths: [Batch]
+    max_lengths: an int value. If None, max_lengths == max(lengths)
+    '''
+    max_length = max_length or torch.max(lengths)
+    sequence = torch.arange(max_length)[None, :].to(lengths.device)
+    return sequence >= lengths[:, None]    # [Batch, Time]
