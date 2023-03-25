@@ -1,6 +1,5 @@
-# HierSpeech (WIP)
+# HierSpeech
 
-* __The status of this repository is Work in Progress__.
 * This code is a non-official implementation of HierSpeech.
 * The algorithm is based on the following papers:
 
@@ -12,7 +11,6 @@ Badlani, R., Łańcucki, A., Shih, K. J., Valle, R., Ping, W., & Catanzaro, B. (
 # Structure
 * Structure is referred from the HierSpeech, but I changed several parts.
 * The multi-head attention is changed to linearized attention in FFT Block.
-    * By this change, positional encoding is removed.
 * Discriminator
     * According to the advice of the paper [author](https://github.com/sh-lee-prml), **scale discriminator** and **multi stft discriminator** were applied as discriminators.
     * To prevent discriminator win, the gradient penalty is applied by R1 regularization.
@@ -108,6 +106,4 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 OMP_NUM_THREADS=32 python -m torch.distribu
 * I recommend to check the [multi_gpu.sh](./multi_gpu.sh).
 
 # TODO
-* This repository is WIP.
-* Frame prior network
 * F0(pitch) apply
