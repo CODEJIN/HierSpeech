@@ -96,7 +96,7 @@ Language_Info_Path: 'D:/Datasets/22K.LJ/Language_Info.yaml'
 Gender_Info_Path: 'D:/Datasets/22K.LJ/Gender_Info.yaml'
 Language_and_Gender_Info_by_Speaker_Path: 'D:/Datasets/22K.LJ/Language_and_Gender_Info_by_Speaker.yaml'
 Train:
-    Pattern_Cache: true
+    Pattern_Cache: false
     Train_Pattern:
         Path: 'D:/Datasets/22K.LJ/Train'
         Metadata_File: 'METADATA.PICKLE'
@@ -125,9 +125,9 @@ Train:
         Decay: 0.999875
         STFT_Loss_Lambda: 45.0
     ADAM:
-        Beta1: 0.9
-        Beta2: 0.999
-        Epsilon: 1.0e-7
+        Beta1: 0.8
+        Beta2: 0.99
+        Epsilon: 1.0e-9
     Gradient_Norm: 0.0
     Max_Step: 1000000
     Checkpoint_Save_Interval: 5000
@@ -150,11 +150,11 @@ Checkpoint_Path: './results/Checkpoint'
 Log_Path: './results/Log'
 
 Weights_and_Biases:
-    # Use: true
-    Use: false
+    Use: true
+    # Use: false
     Project: 'HierSpeech'
     Entity: 'codejin'
-    Name: 'Test'
+    Name: 'LJ_SDP_Source'
     Save_Checkpoint:
         Use: false
         Interval: 50000 # Unlike local, The capacity of WandB is small.

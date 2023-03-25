@@ -171,7 +171,7 @@ class Stochastic_Duration_Predictor(torch.nn.Module):
                     conditions= x,
                     reverse= True
                     )
-            durations = z[:, 0].exp().clamp(0.0).ceil().long()
+            durations = (z[:, 0].exp() * masks).clamp(0.0).ceil().long()
 
             return durations, None
 
@@ -303,10 +303,7 @@ class ConvFlow(torch.nn.Module):
         x = torch.cat([x_0, x_1], dim= 1) * masks        
         logdet = (logabsdet * masks).sum(dim= [1, 2])
 
-        if not reverse:
-            return x, logdet
-        else:
-            return x, None
+        return x, logdet
 
 class Flip(torch.nn.Module):
     def forward(

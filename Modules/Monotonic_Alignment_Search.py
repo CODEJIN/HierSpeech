@@ -37,18 +37,18 @@ def Calc_Duration(
 
     return durations, alignments
 
-def Maximum_Path_Generator(neg_cent, mask) -> torch.Tensor:
+def Maximum_Path_Generator(neg_cent, masks) -> torch.Tensor:
     '''
     x: [Batch, Dec_t, Enc_t]
     mask: [Batch, Dec_t, Enc_t]
     '''
-    neg_cent *= mask
+    neg_cent *= masks
     device, dtype = neg_cent.device, neg_cent.dtype
     neg_cent = neg_cent.data.cpu().numpy().astype(np.float32)
-    mask = mask.data.cpu().numpy()
+    masks = masks.data.cpu().numpy()
 
-    token_lengths = mask.sum(axis= 2)[:, 0].astype('int32')   # [Batch]
-    feature_lengths = mask.sum(axis= 1)[:, 0].astype('int32')   # [Batch]
+    token_lengths = masks.sum(axis= 2)[:, 0].astype('int32')   # [Batch]
+    feature_lengths = masks.sum(axis= 1)[:, 0].astype('int32')   # [Batch]
 
     paths = Calc_Paths(neg_cent, token_lengths, feature_lengths)
 
