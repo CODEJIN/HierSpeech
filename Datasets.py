@@ -135,6 +135,7 @@ class Inference_Dataset(torch.utils.data.Dataset):
 
         token = ['<P>'] * (len(pronunciation) * 2 - 1)
         token[0::2] = pronunciation
+        pronunciation = [(x if x != '<P>' else '') for x in token]
         token = Text_to_Token(token, self.token_dict)
 
         return token, text, pronunciation

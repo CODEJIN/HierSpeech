@@ -638,10 +638,8 @@ class Trainer:
             plt.title(f'Prediction  {title}')
             plt.colorbar(ax= ax)
             ax = plt.subplot2grid((3, 1), (1, 0), rowspan= 2)
-            plt.imshow(alignment[:feature_length, :token_length], aspect='auto', origin='lower')
+            plt.imshow(alignment[:feature_length, :token_length].T, aspect='auto', origin='lower')
             plt.title('Alignment    {}'.format(title))
-            plt.colorbar(ax= ax)
-            plt.margins(x= 0)
             plt.yticks(
                 range(len(pronunciation) + 2),
                 ['<S>'] + list(pronunciation) + ['<E>'],

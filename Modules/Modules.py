@@ -488,8 +488,7 @@ class Decoder(torch.nn.Module):
                     negative_slope= self.hp.Decoder.LeakyRelu_Negative_Slope
                     ))
             self.residual_blocks.append(residual_blocks)
-
-            previous_channels = self.hp.Decoder.Upsample.Base_Size // (2 ** (index + 1))
+            previous_channels = current_channels
 
         self.postnet = torch.nn.Sequential(
             torch.nn.LeakyReLU(),
