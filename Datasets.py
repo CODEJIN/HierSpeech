@@ -43,7 +43,6 @@ class Dataset(torch.utils.data.Dataset):
         token_dict: Dict[str, int],
         pattern_path: str,
         metadata_file: str,
-        feature_type: str,
         feature_length_min: int,
         feature_length_max: int,
         text_length_min: int,
@@ -54,13 +53,7 @@ class Dataset(torch.utils.data.Dataset):
         ):
         super().__init__()
         self.token_dict = token_dict
-        self.feature_type = feature_type
         self.pattern_path = pattern_path
-        
-        if feature_type == 'Mel':
-            feature_length_dict = 'Mel_Length_Dict'
-        elif feature_type == 'Spectrogram':
-            feature_length_dict = 'Spectrogram_Length_Dict'
 
         metadata_dict = pickle.load(open(
             os.path.join(pattern_path, metadata_file).replace('\\', '/'), 'rb'
@@ -80,8 +73,8 @@ class Dataset(torch.utils.data.Dataset):
         self.patterns = [
             x for x in self.patterns
             if all([
-                metadata_dict[feature_length_dict][x] >= feature_length_min,
-                metadata_dict[feature_length_dict][x] <= feature_length_max,
+                metadata_dict['Spectrogram_Length_Dict'][x] >= feature_length_min,
+                metadata_dict['Spectrogram_Length_Dict'][x] <= feature_length_max,
                 metadata_dict['Text_Length_Dict'][x] >= text_length_min,
                 metadata_dict['Text_Length_Dict'][x] <= text_length_max
                 ])
@@ -97,18 +90,15 @@ class Dataset(torch.utils.data.Dataset):
     def Pattern_LRU_Cache(self, path: str):
         pattern_dict = pickle.load(open(path, 'rb'))
         
+        # padding between tokens
         token = ['<P>'] * (len(pattern_dict['Pronunciation']) * 2 - 1)
         token[0::2] = pattern_dict['Pronunciation']
         token = Text_to_Token(token, self.token_dict)
-        feature = pattern_dict[self.feature_type]
         
-        return token, feature, pattern_dict['Audio'], pattern_dict['Spectrogram']
+        return token, pattern_dict['Spectrogram'], pattern_dict['Audio']
 
     def __len__(self):
-        return len(self.patterns)
-
-
-    
+        return len(self.patterns)    
 
 class Inference_Dataset(torch.utils.data.Dataset):
     def __init__(
@@ -153,38 +143,28 @@ class Collater:
         self.hop_size = hop_size
 
     def __call__(self, batch):
-        tokens, features, audios, linear_spectrograms = zip(*batch)
+        tokens, features, audios  = zip(*batch)
         token_lengths = np.array([token.shape[0] for token in tokens])
         feature_lengths = np.array([feature.shape[0] for feature in features])
-
-        max_token_length = max(token_lengths)
-        max_feature_length = max(feature_lengths)
 
         tokens = Token_Stack(
             tokens= tokens,
             token_dict= self.token_dict
             )
         features = Feature_Stack(
-            features= features,
-            max_length= max_feature_length
+            features= features
             )
         audios = Audio_Stack(
-            audios= audios,
-            max_length= max_feature_length * self.hop_size
-            )
-        linear_spectrograms = Feature_Stack(
-            features= linear_spectrograms,
-            max_length= max_feature_length
+            audios= audios
             )
         
         tokens = torch.LongTensor(tokens)   # [Batch, Token_t]
         token_lengths = torch.LongTensor(token_lengths)   # [Batch]
         features = torch.FloatTensor(features).permute(0, 2, 1)   # [Batch, Feature_d, Featpure_t]
-        feature_lengths = torch.LongTensor(feature_lengths)   # [Batch]        
+        feature_lengths = torch.LongTensor(feature_lengths)   # [Batch]
         audios = torch.FloatTensor(audios)    # [Batch, Audio_t], Audio_t == Feature_t * hop_size
-        linear_spectrograms = torch.FloatTensor(linear_spectrograms).permute(0, 2, 1)   # [Batch, Spectrogram_d, Feature_t]
 
-        return tokens, token_lengths, features, feature_lengths, audios, linear_spectrograms
+        return tokens, token_lengths, features, feature_lengths, audios
 
 class Inference_Collater:
     def __init__(self,

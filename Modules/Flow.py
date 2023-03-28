@@ -220,6 +220,10 @@ def Fused_Gate(x):
     return x
 
 def Flow_KL_Loss(encoding_means, encoding_log_stds, flows, flow_log_stds, masks):
+    encoding_means = encoding_means.float()
+    encoding_log_stds = encoding_log_stds.float()
+    flows = flows.float()
+    flow_log_stds = flow_log_stds.float()
     masks = masks.float()
 
     loss = encoding_log_stds - flow_log_stds - 0.5

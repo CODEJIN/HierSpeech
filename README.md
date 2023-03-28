@@ -14,7 +14,6 @@ Badlani, R., Łańcucki, A., Shih, K. J., Valle, R., Ping, W., & Catanzaro, B. (
 * Discriminator
     * According to the advice of the paper [author](https://github.com/sh-lee-prml), **scale discriminator** and **multi stft discriminator** were applied as discriminators.
     * To prevent discriminator win, the gradient penalty is applied by R1 regularization.
-* One of mel or spectrogram is can be selected as a feature type.
 
 # Supported dataset
 * [LJ Dataset](https://keithito.com/LJ-Speech-Dataset/)
@@ -24,9 +23,6 @@ Before proceeding, please set the pattern, inference, and checkpoint paths in [H
 
 * Sound
     * Setting basic sound parameters.
-
-* Feature_Type
-    * Setting the feature type (`Mel` or `Spectrogram`).
 
 * Tokens
     * The number of Lyric token.

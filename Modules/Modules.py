@@ -9,18 +9,12 @@ from .Monotonic_Alignment_Search import Calc_Duration
 from .Stochastic_Duration_Predictor import Stochastic_Duration_Predictor
 from .Flow import FlowBlock, WaveNet
 from .Layer import Conv1d, ConvTranspose1d, Linear, Lambda, LayerNorm
+from meldataset import spectrogram_to_mel, mel_spectrogram
 
 class HierSpeech(torch.nn.Module):
     def __init__(self, hyper_parameters: Namespace):
         super().__init__()
         self.hp = hyper_parameters
-
-        if self.hp.Feature_Type == 'Spectrogram':
-            feature_size = self.hp.Sound.N_FFT // 2 + 1
-        elif self.hp.Feature_Type == 'Mel':
-            feature_size = self.hp.Sound.Mel_Dim
-        else:
-            raise ValueError('Unknown feature type: {}'.format(self.hp.Feature_Type))
 
         self.text_encoder = Text_Encoder(self.hp)
         
@@ -61,7 +55,6 @@ class HierSpeech(torch.nn.Module):
         features: torch.FloatTensor= None,
         feature_lengths: torch.Tensor= None,
         audios: torch.Tensor= None,
-        linear_spectrograms: torch.Tensor= None,
         length_scales: Union[float, List[float], torch.Tensor]= 1.0,
         ):
         if not features is None and not feature_lengths is None:    # train
@@ -70,8 +63,7 @@ class HierSpeech(torch.nn.Module):
                 token_lengths= token_lengths,
                 features= features,
                 feature_lengths= feature_lengths,
-                audios= audios,
-                linear_spectrograms= linear_spectrograms,
+                audios= audios
                 )
         else:   #  inference
             return self.Inference(
@@ -86,8 +78,7 @@ class HierSpeech(torch.nn.Module):
         token_lengths: torch.Tensor,
         features: torch.FloatTensor,
         feature_lengths: torch.Tensor,
-        audios: torch.Tensor,
-        linear_spectrograms: torch.Tensor,
+        audios: torch.Tensor
         ):
         encoding_means, encoding_log_stds, encodings = self.text_encoder(
             tokens= tokens,
@@ -102,7 +93,7 @@ class HierSpeech(torch.nn.Module):
             reverse= False
             )   # [Batch, Enc_d, Feature_t]
 
-        acoustic_means, acoustic_log_stds = self.acoustic_encoder(linear_spectrograms, feature_lengths)
+        acoustic_means, acoustic_log_stds = self.acoustic_encoder(features, feature_lengths)
         acoustic_samples = acoustic_means + acoustic_log_stds.exp() * torch.randn_like(acoustic_log_stds)
         acoustic_flows = self.acoustic_flow(
             x= acoustic_samples,
@@ -133,13 +124,23 @@ class HierSpeech(torch.nn.Module):
             )
         acoustic_samples_slice = acoustic_samples_slice.permute(0, 2, 1)    # [Batch, Enc_d, Feature_st]
 
-        features_slice, _ = self.segment(
-            patterns= features.permute(0, 2, 1),
+        mels = spectrogram_to_mel(
+            features,
+            n_fft= self.hp.Sound.N_FFT,
+            num_mels= self.hp.Sound.Mel_Dim,
+            sampling_rate= self.hp.Sound.Sample_Rate,
+            win_size= self.hp.Sound.Frame_Length,
+            fmin= 0,
+            fmax= None,
+            use_denorm= False
+            )
+        mels_slice, _ = self.segment(
+            patterns= mels.permute(0, 2, 1),
             segment_size= self.hp.Train.Segment_Size,
             offsets= offsets
             )
-        features_slice = features_slice.permute(0, 2, 1)    # [Batch, Enc_d, Feature_st]
-
+        mels_slice = mels_slice.permute(0, 2, 1)    # [Batch, Mel_d, Feature_st]
+        
         audios_slice, _ = self.segment(
             patterns= audios,
             segment_size= self.hp.Train.Segment_Size * self.hp.Sound.Frame_Shift,
@@ -151,15 +152,26 @@ class HierSpeech(torch.nn.Module):
             lengths= torch.full_like(feature_lengths, self.hp.Train.Segment_Size)
             )
 
+        mel_predictions_slice = mel_spectrogram(
+            audio_predictions_slice,
+            n_fft= self.hp.Sound.N_FFT,
+            num_mels= self.hp.Sound.Mel_Dim,
+            sampling_rate= self.hp.Sound.Sample_Rate,
+            hop_size= self.hp.Sound.Frame_Shift,
+            win_size= self.hp.Sound.Frame_Length,
+            fmin= 0,
+            fmax= None
+            )
+
         token_predictions = self.token_predictor(
             encodings= linguistic_samples
             )
 
         return \
-            audio_predictions_slice, audios_slice, features_slice, token_predictions, \
+            audio_predictions_slice, audios_slice, mel_predictions_slice, mels_slice, \
             encoding_means, encoding_log_stds, linguistic_flows, linguistic_log_stds, \
             linguistic_means, linguistic_log_stds, acoustic_flows, acoustic_log_stds, \
-            duration_losses, alignments
+            token_predictions, duration_losses, alignments
 
     def Inference(
         self,
