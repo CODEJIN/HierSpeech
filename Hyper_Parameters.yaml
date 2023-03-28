@@ -4,8 +4,6 @@ Sound:
     Frame_Length: 1024
     Frame_Shift: 256
     Sample_Rate: 22050
-    Mel_F_Min: 0
-    Mel_F_Max: 8000
     F0_Min: 65
     F0_Max: 2094
 

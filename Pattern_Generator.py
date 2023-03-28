@@ -4,15 +4,11 @@ import yaml, os, pickle, librosa, re, argparse, math
 from concurrent.futures import ThreadPoolExecutor as PE
 from random import shuffle
 from tqdm import tqdm
-import hgtk
-import logging
 from pysptk.sptk import rapt
 from typing import List, Tuple, Dict, Union, Optional
 
 from phonemizer import phonemize
-from phonemizer.separator import Separator
 from unidecode import unidecode
-import unicodedata
 
 from meldataset import mel_spectrogram, spectrogram, spec_energy
 
@@ -87,53 +83,14 @@ def Phonemize(texts: Union[str, List[str]], language: str):
         texts,
         language= language,
         backend='espeak',
-        separator=Separator(phone= ' ', word='|', syllable= None),
         strip=True,
         preserve_punctuation=True,
+        with_stress= True,
         njobs=4
         )
     pronunciations = [re.sub(whitespace_re, ' ', pronunciation) for pronunciation in pronunciations]
 
-    parsed_pronunciations = []
-    for phoneme_string in pronunciations:        
-        pronunciation = []
-        for word in phoneme_string.split('|'):
-            for phoneme in word.split(' '):
-                if len(phoneme) == 0:
-                    continue
-                sub_phoneme = []
-                for x in phoneme:
-                    if unicodedata.combining(x) and len(sub_phoneme) == 0:  # like '̩'                    
-                        pronunciation[-1] += phoneme
-                        continue
-                    elif not x in ['?', '!', '.', ',']:
-                        sub_phoneme.append(x)
-                    else:
-                        if len(sub_phoneme) > 0:
-                            pronunciation.append(''.join(sub_phoneme))
-                        pronunciation.append(x)
-                        sub_phoneme = []
-                if len(sub_phoneme) > 0:
-                    pronunciation.append(''.join(sub_phoneme))
-            pronunciation.append(' ')
-        pronunciation.pop()
-
-        pronunciation_fix = []
-        for phoneme in pronunciation:
-            if all([
-                len(phoneme) > 1,
-                phoneme[0] in ['ɐ','e','ɛ','i','j','ɫ','n','ŋ','o','p','q','t','u','ɯ','ʌ'],
-                not (phoneme in ['eɪ','ɛɹ','iː','iə','oː','oːɹ','oʊ','ph','tɕ','tʃ','uː',]),
-                not unicodedata.combining(phoneme[-1])
-                ]):
-                pronunciation_fix.extend([phoneme[0], phoneme[1:]])
-            else:
-                pronunciation_fix.append(phoneme)
-        pronunciation = pronunciation_fix
-
-        parsed_pronunciations.append(pronunciation)
-
-    return parsed_pronunciations
+    return pronunciations
 
 def Pattern_Generate(
     path,
@@ -142,8 +99,6 @@ def Pattern_Generate(
     sample_rate: int,
     hop_size: int,
     win_size: int,
-    fmin: int,
-    fmax: int,
     f0_min: int,
     f0_max: int,
     center: bool= False,
@@ -156,7 +111,8 @@ def Pattern_Generate(
         n_fft= n_fft,
         hop_size= hop_size,
         win_size= win_size,
-        center= center
+        center= center,
+        use_normalize= False
         ).squeeze(0).T.numpy()
     mel = mel_spectrogram(
         y= torch.from_numpy(audio).float().unsqueeze(0),
@@ -165,8 +121,8 @@ def Pattern_Generate(
         sampling_rate= sample_rate,
         hop_size= hop_size,
         win_size= win_size,
-        fmin= fmin,
-        fmax= fmax,
+        fmin= 0,
+        fmax= None,
         center= center
         ).squeeze(0).T.numpy()
     log_f0 = rapt(
@@ -222,8 +178,6 @@ def Pattern_File_Generate(path: str, speaker: str, emotion: str, language: str, 
         sample_rate= hp.Sound.Sample_Rate,
         hop_size= hp.Sound.Frame_Shift,
         win_size= hp.Sound.Frame_Length,
-        fmin= hp.Sound.Mel_F_Min,
-        fmax= hp.Sound.Mel_F_Max,
         f0_min= hp.Sound.F0_Min,
         f0_max= hp.Sound.F0_Max
         )

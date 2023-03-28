@@ -70,7 +70,7 @@ def spectral_de_normalize_torch(magnitudes):
 mel_basis = {}
 hann_window = {}
 
-def mel_spectrogram(y, n_fft, num_mels, sampling_rate, hop_size, win_size, fmin, fmax, center=False):
+def mel_spectrogram(y, n_fft, num_mels, sampling_rate, hop_size, win_size, fmin, fmax, center=False, use_normalize= True):
     if torch.min(y) < -1.:
         logging.warning('min value is {}'.format(torch.min(y)))
     if torch.max(y) > 1.:
@@ -90,8 +90,9 @@ def mel_spectrogram(y, n_fft, num_mels, sampling_rate, hop_size, win_size, fmin,
 
     spec = torch.sqrt(spec.pow(2).sum(-1)+(1e-9))
 
-    spec = torch.matmul(mel_basis[str(fmax)+'_'+str(y.device)], spec)
-    spec = spectral_normalize_torch(spec)
+    spec = torch.matmul(mel_basis[str(fmax)+'_'+str(y.device)], spec)    
+    if use_normalize:
+        spec = spectral_normalize_torch(spec)
 
     return spec
 
@@ -123,7 +124,7 @@ def cepstral_liftering(y, n_fft, feature_size, hop_size, win_size, cutoff= 3, ce
 
     return spec
 
-def spectrogram(y, n_fft, hop_size, win_size, center=False):
+def spectrogram(y, n_fft, hop_size, win_size, center=False, use_normalize= True):
     if torch.min(y) < -1.:
         logging.warning('min value is {}'.format(torch.min(y)))
     if torch.max(y) > 1.:
@@ -139,7 +140,8 @@ def spectrogram(y, n_fft, hop_size, win_size, center=False):
                       center=center, pad_mode='reflect', normalized=False, onesided=True, return_complex=False)
 
     spec = torch.sqrt(spec.pow(2).sum(-1)+(1e-9))
-    spec = spectral_normalize_torch(spec)
+    if use_normalize:
+        spec = spectral_normalize_torch(spec)
 
     return spec
 
