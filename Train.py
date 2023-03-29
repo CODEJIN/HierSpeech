@@ -489,7 +489,7 @@ class Trainer:
             image_dict = {
                 'Feature/Target': (target_feature, None, 'auto', None, None, None),
                 'Feature/Prediction': (prediction_feature, None, 'auto', None, None, None),
-                'Duration/Prediction': (prediction_alignment, None, 'auto', None, None, None),
+                'Duration/Prediction': (prediction_alignment.T, None, 'auto', None, None, None),
                 }
             audio_dict = {
                 'Audio/Target': (target_audio, self.hp.Sound.Sample_Rate),
@@ -512,7 +512,7 @@ class Trainer:
                     data= {
                         'Evaluation.Feature.Target': wandb.Image(target_feature),
                         'Evaluation.Feature.Prediction': wandb.Image(prediction_feature),
-                        'Evaluation.Alignment': wandb.Image(prediction_alignment),
+                        'Evaluation.Alignment': wandb.Image(prediction_alignment.T),
                         'Evaluation.Audio.Target': wandb.Audio(
                             target_audio,
                             sample_rate= self.hp.Sound.Sample_Rate,
