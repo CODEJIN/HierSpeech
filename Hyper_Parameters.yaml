@@ -114,7 +114,7 @@ Train:
             Min: 10
             Max: 200
     Num_Workers: 0
-    Batch_Size: 32
+    Batch_Size: 16
     Segment_Size: 32
     Learning_Rate:
         Initial: 2.0e-4
