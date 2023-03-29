@@ -66,20 +66,10 @@ class Discriminator(torch.nn.Module):
         
         for discriminator in self.discriminators:
             discriminations, feature_maps = discriminator(audios)
-            discriminations_list.extend(discriminations)
+            discriminations_list.append(discriminations)
             feature_maps_list.extend(feature_maps)
-            
-        discriminations, feature_maps = self.discriminators(audios)
-        discriminations_list.extend(discriminations)
-        feature_maps_list.extend(feature_maps)
-
-        discriminations, feature_maps = self.multi_scale_discriminator.forward(audios)
 
         return discriminations_list, feature_maps_list
-
-
-
-
 
 
 class Period_Discriminator(torch.nn.Module):
@@ -122,8 +112,8 @@ class Period_Discriminator(torch.nn.Module):
         x = audios.unsqueeze(1)
 
         # dividable by period
-        if audios.size(2) % self.period != 0: 
-            n_pad = self.period - (audios.size(2) % self.period)
+        if x.size(2) % self.period != 0: 
+            n_pad = self.period - (x.size(2) % self.period)
             x = torch.nn.functional.pad(x, (0, n_pad), "reflect")
         x = x.view(x.size(0), x.size(1), x.size(2) // self.period, self.period) # [Batch, 1, Audio_d // Period, Period]
 
@@ -255,83 +245,6 @@ class STFT_Discriminator(torch.nn.Module):
         return x, feature_maps
 
 
-
-
-class Multi_STFT_Discriminator(torch.nn.Module):
-    def __init__(
-        self,
-        n_fft_list: List[int],
-        win_size_list: List[int],
-        channels_list: List[int]= [32, 32, 32, 32, 32],
-        kernel_size_list: List[Tuple[int, int]] = [(3, 9), (3, 9), (3, 9), (3, 9), (3, 3)],
-        stride_list: List[Tuple[int, int]] = [(1, 1), (1, 2), (1, 2), (1, 2), (1, 1)],
-        dilation_list: List[Tuple[int, int]] = [(1, 1), (1, 1), (2, 1), (4, 1), (1, 1)],
-        leaky_relu_negative_slope: float= 0.2
-        ):
-        super().__init__()
-
-        self.discriminators = torch.nn.ModuleList()
-        for n_fft, win_size in zip(n_fft_list, win_size_list):
-            self.discriminators.append(STFT_Discriminator(
-                n_fft= n_fft,
-                win_size= win_size,
-                channels_list= channels_list, 
-                kernel_size_list= kernel_size_list,
-                stride_list= stride_list,
-                dilation_list= dilation_list,
-                leaky_relu_negative_slope= leaky_relu_negative_slope
-                ))
-            
-    def forward(self, audios: torch.Tensor) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
-        discriminations_list = []
-        feature_maps_list = []
-        for discriminator in self.discriminators:
-            discriminations, feature_maps = discriminator(audios)
-            discriminations_list.append(discriminations)
-            feature_maps_list.extend(feature_maps)
-
-        return discriminations_list, feature_maps_list
-
-
-class Multi_Scale_Discriminator(torch.nn.Module):
-    def __init__(
-        self,
-        stack: int,
-        channels_list: List[int]= [16, 64, 256, 1024, 1024, 1024],
-        kernel_size_list: List[int] = [15, 41, 41, 41, 41, 5],
-        stride_list: List[int] = [1, 4, 4, 4, 4, 1],
-        groups_list: List[int] = [1, 4, 16, 64, 256, 1],
-        leaky_relu_negative_slope: float= 0.1
-        ):
-        super().__init__()
-        self.discriminators = torch.nn.ModuleList([
-            Scale_Discriminator(
-                channels_list= channels_list,
-                kernel_size_list= kernel_size_list,
-                stride_list= stride_list,
-                groups_list= groups_list,
-                leaky_relu_negative_slope= leaky_relu_negative_slope,
-                )
-            for _ in range(stack)
-            ])        
-        self.pool = torch.nn.AvgPool1d(4, 2, padding=2)
-
-    def forward(self, audios: torch.Tensor) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
-        discriminations_list = []
-        feature_maps_list = []
-        for discriminator in self.discriminators:
-            discriminations, feature_maps = discriminator(audios)
-            discriminations_list.append(discriminations)
-            feature_maps_list.extend(feature_maps)
-            
-            self.pool.forward(audios.unsqueeze(1)).squeeze(1)
-
-        return discriminations_list, feature_maps_list
-
-
-
-
-
 def Feature_Map_Loss(feature_maps_list_for_real, feature_maps_list_for_fake):
     return torch.stack([
         torch.mean(torch.abs(feature_maps_for_real.detach() - feature_maps_for_fake))
@@ -341,7 +254,6 @@ def Feature_Map_Loss(feature_maps_list_for_real, feature_maps_list_for_fake):
             )
         ]).sum() * 2.0
 
-
 def Discriminator_Loss(discriminations_list_for_real, discriminations_list_for_fake):
     return torch.stack([
         (1 - discriminations_for_real).pow(2.0).mean() + discriminations_for_fake.pow(2.0).mean()
@@ -350,7 +262,6 @@ def Discriminator_Loss(discriminations_list_for_real, discriminations_list_for_f
             discriminations_list_for_fake
             )
         ]).sum()
-
 
 def Generator_Loss(discriminations_list_for_fake):
     return torch.stack([

@@ -37,6 +37,9 @@ logging.basicConfig(
 
 # torch.autograd.set_detect_anomaly(True)
 
+from Modules.vits_source.models import MultiPeriodDiscriminator
+from Modules.vits_source.losses import feature_loss, discriminator_loss, generator_loss
+
 class Trainer:
     def __init__(self, hp_path, steps= 0):
         self.hp_path = hp_path
@@ -156,14 +159,10 @@ class Trainer:
             pin_memory= True
             )
 
-    def Model_Generate(self):
+    def Model_Generate(self):        
         self.model_dict = {
             'HierSpeech': HierSpeech(self.hp).to(self.device),
-            'Discriminator': Discriminator(
-                stft_n_fft_list= self.hp.Discriminator.STFT.N_FFT,
-                stft_win_size_list= self.hp.Discriminator.STFT.Win_Size,
-                scale_stack= self.hp.Discriminator.Scale.Stack,
-                ).to(self.device),
+            'Discriminator': MultiPeriodDiscriminator().to(self.device),
             }
         self.criterion_dict = {
             'MSE': torch.nn.MSELoss(reduce= None).to(self.device),
@@ -228,15 +227,12 @@ class Trainer:
                 audios= audios
                 )
             
-            audios_slice.requires_grad_() # to calculate gradient penalty.
-            discriminations_list_for_real, _ = self.model_dict['Discriminator'](audios_slice)
-            discriminations_list_for_fake, _ = self.model_dict['Discriminator'](audio_predictions_slice.detach())
+            discriminations_list_for_real, discriminations_list_for_fake, _, _ = self.model_dict['Discriminator'](audios_slice.unsqueeze(1), audio_predictions_slice.unsqueeze(1).detach())
             with torch.cuda.amp.autocast(enabled= False):
-                loss_dict['Discrimination'] = Discriminator_Loss(discriminations_list_for_real, discriminations_list_for_fake)
-                loss_dict['R1'] = self.criterion_dict['R1'](discriminations_list_for_real, audios_slice)
+                loss_dict['Discrimination'] = discriminator_loss(discriminations_list_for_real, discriminations_list_for_fake)[0]
 
         self.optimizer_dict['Discriminator'].zero_grad()
-        self.scaler.scale(loss_dict['Discrimination'] + loss_dict['R1']).backward()
+        self.scaler.scale(loss_dict['Discrimination']).backward()
         self.scaler.unscale_(self.optimizer_dict['Discriminator'])
         if self.hp.Train.Gradient_Norm > 0.0:
             torch.nn.utils.clip_grad_norm_(
@@ -248,8 +244,8 @@ class Trainer:
         self.scaler.update()
 
         with torch.cuda.amp.autocast(enabled= self.hp.Use_Mixed_Precision):
-            discriminations_list_for_real, feature_maps_list_for_real = self.model_dict['Discriminator'](audios_slice)
-            discriminations_list_for_fake, feature_maps_list_for_fake = self.model_dict['Discriminator'](audio_predictions_slice)
+            discriminations_list_for_real, discriminations_list_for_fake, feature_maps_list_for_real, feature_maps_list_for_fake = \
+                self.model_dict['Discriminator'](audios_slice.unsqueeze(1), audio_predictions_slice.unsqueeze(1))
             with torch.cuda.amp.autocast(enabled= False):
                 feature_masks = Mask_Generate(
                     lengths= feature_lengths,
@@ -282,8 +278,8 @@ class Trainer:
                     masks= ~feature_masks.unsqueeze(1)
                     )
                 loss_dict['Adversarial'] = \
-                    Feature_Map_Loss(feature_maps_list_for_real, feature_maps_list_for_fake) + \
-                    Generator_Loss(discriminations_list_for_fake)
+                    feature_loss(feature_maps_list_for_real, feature_maps_list_for_fake) + \
+                    generator_loss(discriminations_list_for_fake)[0]
             
         self.optimizer_dict['HierSpeech'].zero_grad()
         self.scaler.scale(
@@ -355,6 +351,7 @@ class Trainer:
         self.scheduler_dict['Discriminator'].step()
         self.scheduler_dict['HierSpeech'].step()
 
+    @torch.no_grad()
     def Evaluation_Step(self, tokens, token_lengths, features, feature_lengths, audios):
         loss_dict = {}
         tokens = tokens.to(self.device, non_blocking=True)
@@ -375,9 +372,8 @@ class Trainer:
                 audios= audios
                 )
 
-            audios_slice.requires_grad_() # to calculate gradient penalty.            
-            discriminations_list_for_real, feature_maps_list_for_real = self.model_dict['Discriminator'](audios_slice)
-            discriminations_list_for_fake, feature_maps_list_for_fake = self.model_dict['Discriminator'](audio_predictions_slice)
+            discriminations_list_for_real, discriminations_list_for_fake, feature_maps_list_for_real, feature_maps_list_for_fake = \
+                self.model_dict['Discriminator'](audios_slice.unsqueeze(1), audio_predictions_slice.unsqueeze(1))
             with torch.cuda.amp.autocast(enabled= False):
                 feature_masks = Mask_Generate(
                     lengths= feature_lengths,
@@ -409,11 +405,10 @@ class Trainer:
                     flow_log_stds= acoustic_log_stds,
                     masks= ~feature_masks.unsqueeze(1)
                     )
-                loss_dict['Discrimination'] = Discriminator_Loss(discriminations_list_for_real, discriminations_list_for_fake)
-                loss_dict['R1'] = self.criterion_dict['R1'](discriminations_list_for_real, audios_slice)                
+                loss_dict['Discrimination'] = discriminator_loss(discriminations_list_for_real, discriminations_list_for_fake)[0]
                 loss_dict['Adversarial'] = \
-                    Feature_Map_Loss(feature_maps_list_for_real, feature_maps_list_for_fake) + \
-                    Generator_Loss(discriminations_list_for_fake)
+                    feature_loss(feature_maps_list_for_real, feature_maps_list_for_fake) + \
+                    generator_loss(discriminations_list_for_fake)[0]
 
         for tag, loss in loss_dict.items():
             loss = reduce_tensor(loss.data, self.num_gpus).item() if self.num_gpus > 1 else loss.item()
@@ -494,7 +489,7 @@ class Trainer:
             image_dict = {
                 'Feature/Target': (target_feature, None, 'auto', None, None, None),
                 'Feature/Prediction': (prediction_feature, None, 'auto', None, None, None),
-                'Duration/Prediction': (prediction_alignment, None, 'auto', None, None, None),
+                'Duration/Prediction': (prediction_alignment.T, None, 'auto', None, None, None),
                 }
             audio_dict = {
                 'Audio/Target': (target_audio, self.hp.Sound.Sample_Rate),
@@ -517,7 +512,7 @@ class Trainer:
                     data= {
                         'Evaluation.Feature.Target': wandb.Image(target_feature),
                         'Evaluation.Feature.Prediction': wandb.Image(prediction_feature),
-                        'Evaluation.Alignment': wandb.Image(prediction_alignment),
+                        'Evaluation.Alignment': wandb.Image(prediction_alignment.T),
                         'Evaluation.Audio.Target': wandb.Audio(
                             target_audio,
                             sample_rate= self.hp.Sound.Sample_Rate,
