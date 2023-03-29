@@ -7,6 +7,7 @@ class Discriminator(torch.nn.Module):
         self,
         stft_n_fft_list: List[int],
         stft_win_size_list: List[int],
+        scale_stack: int,
         stft_channels_list: List[int]= [32, 128, 512, 1024, 1024],
         stft_kernel_size_list: List[Tuple[int, int]] = [(3, 9), (3, 9), (3, 9), (3, 9), (3, 3)],
         stft_stride_list: List[Tuple[int, int]] = [(1, 1), (1, 2), (1, 2), (1, 2), (1, 1)],
@@ -28,7 +29,8 @@ class Discriminator(torch.nn.Module):
             dilation_list= stft_dilation_list,
             leaky_relu_negative_slope= leaky_relu_negative_slope
             )
-        self.scale_discriminator = Scale_Discriminator(
+        self.multi_scale_discriminator = Multi_Scale_Discriminator(
+            stack= scale_stack,
             channels_list= scale_channels_list,
             kernel_size_list= scale_kernel_size_list,
             stride_list= scale_stride_list,
@@ -43,8 +45,8 @@ class Discriminator(torch.nn.Module):
         discriminations_list.extend(discriminations)
         feature_maps_list.extend(feature_maps)
 
-        discriminations, feature_maps = self.scale_discriminator.forward(audios)
-        discriminations_list.append(discriminations)
+        discriminations, feature_maps = self.multi_scale_discriminator.forward(audios)
+        discriminations_list.extend(discriminations)
         feature_maps_list.extend(feature_maps)
 
         return discriminations_list, feature_maps_list
@@ -108,10 +110,10 @@ class STFT_Discriminator(torch.nn.Module):
             padding= 1
             )))
         
-        def weight_norm_initialize_weight(module):
-            if 'Conv' in module.__class__.__name__:
-                module.weight.data.normal_(0.0, 0.01)
-        self.blocks.apply(weight_norm_initialize_weight)
+        # def weight_norm_initialize_weight(module):
+        #     if 'Conv' in module.__class__.__name__:
+        #         module.weight.data.normal_(0.0, 0.01)
+        # self.blocks.apply(weight_norm_initialize_weight)
         
     def forward(self, audios: torch.Tensor):
         x = self.prenet(audios).unsqueeze(1)   # [Batch, 1, Feature_d, Feature_t]
@@ -202,10 +204,10 @@ class Scale_Discriminator(torch.nn.Module):
             padding= 1
             )))
         
-        def weight_norm_initialize_weight(module):
-            if 'Conv' in module.__class__.__name__:
-                module.weight.data.normal_(0.0, 0.01)
-        self.blocks.apply(weight_norm_initialize_weight)
+        # def weight_norm_initialize_weight(module):
+        #     if 'Conv' in module.__class__.__name__:
+        #         module.weight.data.normal_(0.0, 0.01)
+        # self.blocks.apply(weight_norm_initialize_weight)
 
     def forward(self, audios: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor]]:
         x = audios.unsqueeze(1) # [Batch, 1, Audio_t]

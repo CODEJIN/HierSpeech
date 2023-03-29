@@ -77,8 +77,10 @@ Decoder:
 
 Discriminator:
     STFT:
-        N_FFT: [1024, 2048, 512]
-        Win_Size: [1024, 2048, 512]
+        N_FFT: [1024, 2048, 512, 300, 1200]
+        Win_Size: [1024, 2048, 512, 300, 1200]
+    Scale:
+        Stack: 5
 
 Token_Path: 'D:/Datasets/22K.LJ/Token.yaml'
 GE2E_Path: 'D:/Datasets/22K.LJ/GE2E.pickle'
