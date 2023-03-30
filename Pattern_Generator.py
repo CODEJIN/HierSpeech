@@ -16,7 +16,6 @@ from Arg_Parser import Recursive_Parse
 
 using_Extension = [x.upper() for x in ['.wav', '.m4a', '.flac']]
 regex_checker = re.compile('[가-힣A-Za-z,.?!\'\-\s]+')
-top_db_dict = {'KSS': 35, 'Emotion': 30, 'AIHub': 30, 'VCTK': 15, 'Libri': 23}
 
 if __name__ == '__main__':
     ge2e_generator = torch.jit.load('ge2e.pts')
@@ -212,7 +211,7 @@ def Pattern_File_Generate(path: str, speaker: str, emotion: str, language: str, 
     with open(file, 'wb') as f:
         pickle.dump(new_Pattern_dict, f, protocol=4)
 
-def Emotion_Info_Load(path: str):
+def Selvas_Info_Load(path: str):
     '''
     ema, emb, emf, emg, emh, nea, neb, nec, ned, nee, nek, nel, nem, nen, neo
     1-100: Neutral
@@ -258,7 +257,7 @@ def Emotion_Info_Load(path: str):
     
     emotion_dict = {}
     for path in paths:
-        if speaker_dict[path] in ['LMY', 'AVA', 'AVB', 'AVC', 'AVD', 'ADA', 'ADB', 'ADC', 'ADD']:
+        if speaker_dict[path] in ['LMY', 'KIH', 'AVA', 'AVB', 'AVC', 'AVD', 'ADA', 'ADB', 'ADC', 'ADD', 'PFA', 'PFB', 'PFC', 'PFD', 'PFI', 'PFL', 'PFM', 'PFO', 'PFP', 'PMA', 'PMB', 'PMC', 'PMD', 'PMI', 'PMJ', 'PML']:
             emotion_dict[path] = 'Neutral'
         elif speaker_dict[path] in ['EMA', 'EMB', 'EMF', 'EMG', 'EMH', 'NEA', 'NEB', 'NEC', 'NED', 'NEE', 'NEK', 'NEL', 'NEM', 'NEN', 'NEO']:
             index = int(os.path.splitext(os.path.basename(path))[0][-5:])
@@ -291,6 +290,7 @@ def Emotion_Info_Load(path: str):
         'EMF': 'Male',
         'EMG': 'Male',
         'EMH': 'Male',
+        'KIH': 'Male',
         'LMY': 'Female',
         'NEA': 'Female',
         'NEB': 'Female',
@@ -302,6 +302,22 @@ def Emotion_Info_Load(path: str):
         'NEM': 'Male',
         'NEN': 'Male',
         'NEO': 'Male',
+        'PFA': 'Female',
+        'PFB': 'Female',
+        'PFC': 'Female',
+        'PFD': 'Female',
+        'PFI': 'Female',
+        'PFL': 'Female',
+        'PFM': 'Female',
+        'PFO': 'Female',
+        'PFP': 'Female',
+        'PMA': 'Male',
+        'PMB': 'Male',
+        'PMC': 'Male',
+        'PMD': 'Male',
+        'PMI': 'Male',
+        'PMJ': 'Male',
+        'PML': 'Male',
         }
     gender_dict = {
         path: gender_dict[speaker]
@@ -490,13 +506,15 @@ def VCTK_Info_Load(path: str):
     '''
     VCTK v0.92 is distributed as flac files.
     '''
-    path = os.path.join(path, 'wav48').replace('\\', '/')   
-
+    path = os.path.join(path, 'wav48_silence_trimmed').replace('\\', '/')
+    
     paths = []
     for root, _, files in os.walk(path):
         for file in files:
             file = os.path.join(root, file).replace('\\', '/')
             if not os.path.splitext(file)[1].upper() in using_Extension:
+                continue
+            elif '_mic1' in file:
                 continue
 
             paths.append(file)
@@ -505,7 +523,7 @@ def VCTK_Info_Load(path: str):
     for path in paths:
         if 'p315'.upper() in path.upper():  #Officially, 'p315' text is lost in VCTK dataset.
             continue
-        text = Text_Filtering(unidecode(open(path.replace('wav48', 'txt').replace('flac', 'txt'), 'r').readlines()[0]))
+        text = Text_Filtering(unidecode(open(path.replace('wav48_silence_trimmed', 'txt').replace('flac', 'txt').replace('_mic2', ''), 'r').readlines()[0]))
         if text is None:
             continue
         
@@ -934,7 +952,7 @@ def Token_dict_Generate(tokens: Union[List[str], str]):
 if __name__ == '__main__':
     argParser = argparse.ArgumentParser()
     argParser.add_argument("-hp", "--hyper_parameters", required=True, type= str)
-    argParser.add_argument("-emo", "--emotion_path", required=False)
+    argParser.add_argument("-selvas", "--selvas_path", required=False)
     argParser.add_argument("-kss", "--kss_path", required=False)
     argParser.add_argument("-aihub", "--aihub_path", required=False)
 
@@ -964,19 +982,19 @@ if __name__ == '__main__':
     dataset_dict = {}
     tag_dict = {}
 
-    if not args.emotion_path is None:
-        emotion_paths, emotion_text_dict, emotion_pronunciation_dict, emotion_speaker_dict, emotion_emotion_dict, emotion_language_dict, emotion_gender_dict = Emotion_Info_Load(path= args.emotion_path)
-        emotion_paths = Split_Eval(emotion_paths, args.eval_ratio, args.eval_min)
-        train_paths.extend(emotion_paths[0])
-        eval_paths.extend(emotion_paths[1])
-        text_dict.update(emotion_text_dict)
-        pronunciation_dict.update(emotion_pronunciation_dict)
-        speaker_dict.update(emotion_speaker_dict)
-        emotion_dict.update(emotion_emotion_dict)
-        language_dict.update(emotion_language_dict)
-        gender_dict.update(emotion_gender_dict)
-        dataset_dict.update({path: 'Emotion' for paths in emotion_paths for path in paths})
-        tag_dict.update({path: '' for paths in emotion_paths for path in paths})
+    if not args.selvas_path is None:
+        selvas_paths, selvas_text_dict, selvas_pronunciation_dict, selvas_speaker_dict, selvas_emotion_dict, selvas_language_dict, selvas_gender_dict = Selvas_Info_Load(path= args.selvas_path)
+        selvas_paths = Split_Eval(selvas_paths, args.eval_ratio, args.eval_min)
+        train_paths.extend(selvas_paths[0])
+        eval_paths.extend(selvas_paths[1])
+        text_dict.update(selvas_text_dict)
+        pronunciation_dict.update(selvas_pronunciation_dict)
+        speaker_dict.update(selvas_speaker_dict)
+        emotion_dict.update(selvas_emotion_dict)
+        language_dict.update(selvas_language_dict)
+        gender_dict.update(selvas_gender_dict)
+        dataset_dict.update({path: 'Selvas' for paths in selvas_paths for path in paths})
+        tag_dict.update({path: '' for paths in selvas_paths for path in paths})
 
     if not args.kss_path is None:
         kss_paths, kss_text_dict, kss_pronunciation_dict, kss_speaker_dict, kss_emotion_dict, kss_language_dict, kss_gender_dict = KSS_Info_Load(path= args.kss_path)
@@ -1110,5 +1128,3 @@ if __name__ == '__main__':
 
     Metadata_Generate()
     Metadata_Generate(eval= True)
-
-# python Pattern_Generator.py -hp Hyper_Parameters.yaml -lj D:/Datasets/LJSpeech
