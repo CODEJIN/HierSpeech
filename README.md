@@ -25,7 +25,11 @@ Before proceeding, please set the pattern, inference, and checkpoint paths in [H
     * Setting basic sound parameters.
 
 * Tokens
-    * The number of Lyric token.
+    * The number of token.
+
+* Discriminator
+    * If `Use_STFT` is `true`, model use period and stft discriminator, except scale.
+    * If `Use_STFT` is `false`, model use period and scale discriminator, except stft.
 
 * Train
     * Setting the parameters of training.
