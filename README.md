@@ -1,11 +1,10 @@
 # HierSpeech
 
-* This code is a non-official implementation of HierSpeech.
+* This code is a unofficial implementation of HierSpeech.
 * The algorithm is based on the following papers:
 
 ```
 Lee, S. H., Kim, S. B., Lee, J. H., Song, E., Hwang, M. J., & Lee, S. W. HierSpeech: Bridging the Gap between Text and Speech by Hierarchical Variational Inference using Self-supervised Representations for Speech Synthesis. In Advances in Neural Information Processing Systems.
-Badlani, R., Łańcucki, A., Shih, K. J., Valle, R., Ping, W., & Catanzaro, B. (2022, May). One TTS alignment to rule them all. In ICASSP 2022-2022 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP) (pp. 6092-6096). IEEE.
 ```
 
 # Structure
