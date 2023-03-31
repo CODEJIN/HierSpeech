@@ -94,8 +94,8 @@ class Dataset(torch.utils.data.Dataset):
         token = ['<P>'] * (len(pattern_dict['Pronunciation']) * 2 - 1)
         token[0::2] = pattern_dict['Pronunciation']
         token = Text_to_Token(token, self.token_dict)
-        
-        return token, pattern_dict['Spectrogram'], pattern_dict['Audio']
+
+        return token, pattern_dict['GE2E'], pattern_dict['Spectrogram'], pattern_dict['Audio']
 
     def __len__(self):
         return len(self.patterns)    
@@ -104,31 +104,37 @@ class Inference_Dataset(torch.utils.data.Dataset):
     def __init__(
         self,
         token_dict: Dict[str, int],
+        ge2e_dict: Dict[str, np.ndarray],
         texts: List[str],
+        speakers: List[str],
         ):
         super().__init__()
         self.token_dict = token_dict
+        self.ge2e_dict = ge2e_dict
 
         pronunciations = Phonemize(texts, language= 'English')
 
         self.patterns = []
-        for index, (text, pronunciation) in enumerate(zip(texts, pronunciations)):
+        for index, (text, pronunciation, speaker) in enumerate(zip(texts, pronunciations, speakers)):
             text = Text_Filtering(text)
             if text is None or text == '':
                 logging.warning('The text of index {} is incorrect. This index is ignoired.'.format(index))
-                continue            
-
-            self.patterns.append((text, pronunciation))
+                continue
+            elif speaker is None or not speaker in ge2e_dict.keys():
+                logging.warning('The speaker of index {} is unknown. This index is ignoired.'.format(index))
+                continue
+            self.patterns.append((text, pronunciation, speaker))
 
     def __getitem__(self, idx):
-        text, pronunciation = self.patterns[idx]
+        text, pronunciation, speaker = self.patterns[idx]
 
         token = ['<P>'] * (len(pronunciation) * 2 - 1)
         token[0::2] = pronunciation
         pronunciation = [(x if x != '<P>' else '') for x in token]
         token = Text_to_Token(token, self.token_dict)
+        ge2e = self.ge2e_dict[speaker]
 
-        return token, text, pronunciation
+        return token, ge2e, text, pronunciation, speaker
 
     def __len__(self):
         return len(self.patterns)
@@ -143,7 +149,7 @@ class Collater:
         self.hop_size = hop_size
 
     def __call__(self, batch):
-        tokens, features, audios  = zip(*batch)
+        tokens, ge2es, features, audios  = zip(*batch)
         token_lengths = np.array([token.shape[0] for token in tokens])
         feature_lengths = np.array([feature.shape[0] for feature in features])
 
@@ -151,6 +157,7 @@ class Collater:
             tokens= tokens,
             token_dict= self.token_dict
             )
+        ge2es = np.stack(ge2es, axis= 0)
         features = Feature_Stack(
             features= features
             )
@@ -160,11 +167,12 @@ class Collater:
         
         tokens = torch.LongTensor(tokens)   # [Batch, Token_t]
         token_lengths = torch.LongTensor(token_lengths)   # [Batch]
+        ge2es = torch.FloatTensor(ge2es)   # [Batch, GE2E_d]
         features = torch.FloatTensor(features).permute(0, 2, 1)   # [Batch, Feature_d, Featpure_t]
         feature_lengths = torch.LongTensor(feature_lengths)   # [Batch]
         audios = torch.FloatTensor(audios)    # [Batch, Audio_t], Audio_t == Feature_t * hop_size
 
-        return tokens, token_lengths, features, feature_lengths, audios
+        return tokens, token_lengths, ge2es, features, feature_lengths, audios
 
 class Inference_Collater:
     def __init__(self,
@@ -173,13 +181,15 @@ class Inference_Collater:
         self.token_dict = token_dict
          
     def __call__(self, batch):
-        tokens, texts, pronunciations = zip(*batch)
+        tokens, ge2es, texts, pronunciations, speakers = zip(*batch)
 
         token_lengths = np.array([token.shape[0] for token in tokens])
         
         tokens = Token_Stack(tokens, self.token_dict)
+        ge2es = np.stack(ge2es, axis= 0)
         
-        tokens = torch.LongTensor(tokens)   # [Batch, Time]
+        tokens = torch.LongTensor(tokens)   # [Batch, Token_t]
         token_lengths = torch.LongTensor(token_lengths)   # [Batch]
+        ge2es = torch.FloatTensor(ge2es)   # [Batch, GE2E_d]
         
-        return tokens, token_lengths, texts, pronunciations
+        return tokens, token_lengths, ge2es, texts, pronunciations, speakers

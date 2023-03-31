@@ -8,6 +8,7 @@ Sound:
     F0_Max: 2094
 
 Tokens: 55
+GE2E_Size: 256
 
 Encoder:
     Size: 192
@@ -81,21 +82,21 @@ Discriminator:
     STFT_N_FFT: [1024, 2048, 512, 300, 1200]
     Scale_Pool_Kernel_Size: [1, 4, 8, 16, 32]
 
-Token_Path: 'D:/Datasets/22K.LJ/Token.yaml'
-GE2E_Path: 'D:/Datasets/22K.LJ/GE2E.pickle'
-Spectrogram_Range_Info_Path: 'D:/Datasets/22K.LJ/Spectrogram_Range_Info.yaml'
-Mel_Range_Info_Path: 'D:/Datasets/22K.LJ/Mel_Range_Info.yaml'
-Log_F0_Info_Path: 'D:/Datasets/22K.LJ/Log_F0_Info.yaml'
-Log_Energy_Info_Path: 'D:/Datasets/22K.LJ/Log_Energy_Info.yaml'
-Speaker_Info_Path: 'D:/Datasets/22K.LJ/Speaker_Info.yaml'
-Emotion_Info_Path: 'D:/Datasets/22K.LJ/Emotion_Info.yaml'
-Language_Info_Path: 'D:/Datasets/22K.LJ/Language_Info.yaml'
-Gender_Info_Path: 'D:/Datasets/22K.LJ/Gender_Info.yaml'
-Language_and_Gender_Info_by_Speaker_Path: 'D:/Datasets/22K.LJ/Language_and_Gender_Info_by_Speaker.yaml'
+Token_Path: 'D:/Datasets/22K.Selvas/Token.yaml'
+GE2E_Path: 'D:/Datasets/22K.Selvas/GE2E.pickle'
+Spectrogram_Range_Info_Path: 'D:/Datasets/22K.Selvas/Spectrogram_Range_Info.yaml'
+Mel_Range_Info_Path: 'D:/Datasets/22K.Selvas/Mel_Range_Info.yaml'
+Log_F0_Info_Path: 'D:/Datasets/22K.Selvas/Log_F0_Info.yaml'
+Log_Energy_Info_Path: 'D:/Datasets/22K.Selvas/Log_Energy_Info.yaml'
+Speaker_Info_Path: 'D:/Datasets/22K.Selvas/Speaker_Info.yaml'
+Emotion_Info_Path: 'D:/Datasets/22K.Selvas/Emotion_Info.yaml'
+Language_Info_Path: 'D:/Datasets/22K.Selvas/Language_Info.yaml'
+Gender_Info_Path: 'D:/Datasets/22K.Selvas/Gender_Info.yaml'
+Language_and_Gender_Info_by_Speaker_Path: 'D:/Datasets/22K.Selvas/Language_and_Gender_Info_by_Speaker.yaml'
 Train:
     Pattern_Cache: true
     Train_Pattern:
-        Path: 'D:/Datasets/22K.LJ/Train'
+        Path: 'D:/Datasets/22K.Selvas/Train'
         Metadata_File: 'METADATA.PICKLE'
         Feature_Length:
             Min: 50
@@ -106,7 +107,7 @@ Train:
         Accumulated_Dataset_Epoch: 1 # This is to prevent slow down from torch.utils.data.DataLoader when the number of patterns is small.
         Augmentation_Ratio: 0.10
     Eval_Pattern:
-        Path: 'D:/Datasets/22K.LJ/Eval'
+        Path: 'D:/Datasets/22K.Selvas/Eval'
         Metadata_File: 'METADATA.PICKLE'
         Feature_Length:
             Min: 50
@@ -139,6 +140,12 @@ Train:
             'Do not count your chickens before they hatch.',
             'If you laugh, blessings will come your way.'
             ]
+        Speaker: [
+            'VCTK.P245',
+            'VCTK.P294',
+            'VCTK.P339',
+            'VCTK.S5',
+            ]
 
 Inference_Batch_Size: 16
 
@@ -151,7 +158,7 @@ Weights_and_Biases:
     Use: false
     Project: 'HierSpeech'
     Entity: 'codejin'
-    Name: 'LJ_SDP_Source'
+    Name: 'Sevals'
     Save_Checkpoint:
         Use: false
         Interval: 50000 # Unlike local, The capacity of WandB is small.

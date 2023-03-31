@@ -17,6 +17,11 @@ class HierSpeech(torch.nn.Module):
         self.hp = hyper_parameters
 
         self.text_encoder = Text_Encoder(self.hp)
+        self.condition = Linear(
+            in_features= self.hp.GE2E_Size,
+            out_features= self.hp.Encoder.Size,
+            w_init_gain= 'linear'
+            )
         
         self.decoder = Decoder(self.hp)
         
@@ -28,7 +33,8 @@ class HierSpeech(torch.nn.Module):
             flow_wavenet_conv_stack= self.hp.Linguistic_Flow.Conv_Stack,
             flow_wavenet_kernel_size= self.hp.Linguistic_Flow.Kernel_Szie,
             flow_wavnet_dilation_rate= self.hp.Linguistic_Flow.Dilation_Rate,
-            flow_wavenet_dropout_rate= self.hp.Linguistic_Flow.Dropout_Rate
+            flow_wavenet_dropout_rate= self.hp.Linguistic_Flow.Dropout_Rate,
+            condition_channels= self.hp.Encoder.Size
             )
 
         self.acoustic_encoder = Acoustic_Encoder(self.hp)
@@ -39,7 +45,8 @@ class HierSpeech(torch.nn.Module):
             flow_wavenet_conv_stack= self.hp.Acoustic_Flow.Conv_Stack,
             flow_wavenet_kernel_size= self.hp.Acoustic_Flow.Kernel_Szie,
             flow_wavnet_dilation_rate= self.hp.Acoustic_Flow.Dilation_Rate,
-            flow_wavenet_dropout_rate= self.hp.Acoustic_Flow.Dropout_Rate
+            flow_wavenet_dropout_rate= self.hp.Acoustic_Flow.Dropout_Rate,
+            condition_channels= self.hp.Encoder.Size
             )
 
         self.variance_block = Variance_Block(self.hp)
@@ -52,6 +59,7 @@ class HierSpeech(torch.nn.Module):
         self,
         tokens: torch.Tensor,
         token_lengths: torch.Tensor,
+        ge2es: torch.FloatTensor,
         features: torch.FloatTensor= None,
         feature_lengths: torch.Tensor= None,
         audios: torch.Tensor= None,
@@ -61,6 +69,7 @@ class HierSpeech(torch.nn.Module):
             return self.Train(
                 tokens= tokens,
                 token_lengths= token_lengths,
+                ge2es= ge2es,
                 features= features,
                 feature_lengths= feature_lengths,
                 audios= audios
@@ -69,6 +78,7 @@ class HierSpeech(torch.nn.Module):
             return self.Inference(
                 tokens= tokens,
                 token_lengths= token_lengths,
+                ge2es= ge2es,
                 length_scales= length_scales
                 )
 
@@ -76,6 +86,7 @@ class HierSpeech(torch.nn.Module):
         self,
         tokens: torch.Tensor,
         token_lengths: torch.Tensor,
+        ge2es: torch.FloatTensor,
         features: torch.FloatTensor,
         feature_lengths: torch.Tensor,
         audios: torch.Tensor
@@ -84,12 +95,14 @@ class HierSpeech(torch.nn.Module):
             tokens= tokens,
             lengths= token_lengths
             )
+        conditions = self.condition(ge2es)
         
         linguistic_means, linguistic_log_stds = self.linguistic_encoder(audios, feature_lengths)
         linguistic_samples = linguistic_means + linguistic_log_stds.exp() * torch.randn_like(linguistic_log_stds)
         linguistic_flows = self.linguistic_flow(
             x= linguistic_samples,
             lengths= feature_lengths,
+            conditions= conditions,
             reverse= False
             )   # [Batch, Enc_d, Feature_t]
 
@@ -98,6 +111,7 @@ class HierSpeech(torch.nn.Module):
         acoustic_flows = self.acoustic_flow(
             x= acoustic_samples,
             lengths= feature_lengths,
+            conditions= conditions,
             reverse= False
             )   # [Batch, Enc_d, Feature_t]
 
@@ -177,6 +191,7 @@ class HierSpeech(torch.nn.Module):
         self,
         tokens: torch.Tensor,
         token_lengths: torch.Tensor,
+        ge2es: torch.FloatTensor,
         length_scales: Union[float, List[float], torch.Tensor]= 1.0
         ):
         length_scales = self.Scale_to_Tensor(tokens= tokens, scale= length_scales)
@@ -185,6 +200,7 @@ class HierSpeech(torch.nn.Module):
             tokens= tokens,
             lengths= token_lengths
             )
+        conditions = self.condition(ge2es)
         
         alignments, _ = self.variance_block(
             encodings= encodings,
@@ -200,12 +216,14 @@ class HierSpeech(torch.nn.Module):
         linguistic_samples = self.linguistic_flow(
             x= encoding_samples,
             lengths= feature_lengths,
+            conditions= conditions,
             reverse= True
             )   # [Batch, Enc_d, Feature_t]
 
         acoustic_samples = self.acoustic_flow(
             x= linguistic_samples,
             lengths= feature_lengths,
+            conditions= conditions,
             reverse= True
             )   # [Batch, Enc_d, Feature_t]
 

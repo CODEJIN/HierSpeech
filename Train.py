@@ -14,7 +14,6 @@ from scipy.io import wavfile
 from Modules.Modules import HierSpeech, Mask_Generate
 from Modules.Discriminator import Discriminator, R1_Regulator, Feature_Map_Loss, Generator_Loss, Discriminator_Loss
 from Modules.Flow import Flow_KL_Loss
-from Modules.Nvidia_Alignment_Leraning_Framework import AttentionBinarizationLoss, AttentionCTCLoss
 
 from Datasets import Dataset, Inference_Dataset, Collater, Inference_Collater
 from Logger import Logger
@@ -85,6 +84,7 @@ class Trainer:
 
     def Dataset_Generate(self):
         token_dict = yaml.load(open(self.hp.Token_Path, 'r', encoding= 'utf-8-sig'), Loader=yaml.Loader)
+        ge2e_dict = pickle.load(open(self.hp.GE2E_Path, 'rb'))
 
         train_dataset = Dataset(
             token_dict= token_dict,
@@ -110,7 +110,9 @@ class Trainer:
             )
         inference_dataset = Inference_Dataset(
             token_dict= token_dict,
+            ge2e_dict= ge2e_dict,
             texts= self.hp.Train.Inference_in_Train.Text,
+            speakers= self.hp.Train.Inference_in_Train.Speaker,
             )
 
         if self.gpu_id == 0:
@@ -169,8 +171,6 @@ class Trainer:
         self.criterion_dict = {
             'MSE': torch.nn.MSELoss(reduce= None).to(self.device),
             'MAE': torch.nn.L1Loss(reduce= None).to(self.device),
-            'Attention_Binarization': AttentionBinarizationLoss(),
-            'Attention_CTC': AttentionCTCLoss(),
             'TokenCTC': torch.nn.CTCLoss(
                 blank= self.hp.Tokens,  # == Token length
                 zero_infinity=True
@@ -209,10 +209,11 @@ class Trainer:
         # if self.gpu_id == 0:
         #     logging.info(self.model_dict['HierSpeech'])
 
-    def Train_Step(self, tokens, token_lengths, features, feature_lengths, audios):
+    def Train_Step(self, tokens, token_lengths, ge2es, features, feature_lengths, audios):
         loss_dict = {}
         tokens = tokens.to(self.device, non_blocking=True)
         token_lengths = token_lengths.to(self.device, non_blocking=True)
+        ge2es = ge2es.to(self.device, non_blocking=True)
         features = features.to(self.device, non_blocking=True)
         feature_lengths = feature_lengths.to(self.device, non_blocking=True)
         audios = audios.to(self.device, non_blocking=True)
@@ -224,6 +225,7 @@ class Trainer:
             token_predictions, duration_losses, _ = self.model_dict['HierSpeech'](
                 tokens= tokens,
                 token_lengths= token_lengths,
+                ge2es= ge2es,
                 features= features,
                 feature_lengths= feature_lengths,
                 audios= audios
@@ -314,10 +316,11 @@ class Trainer:
             self.scalar_dict['Train']['Loss/{}'.format(tag)] += loss
 
     def Train_Epoch(self):
-        for tokens, token_lengths, features, feature_lengths, audios in self.dataloader_dict['Train']:
+        for tokens, token_lengths, ge2es, features, feature_lengths, audios in self.dataloader_dict['Train']:
             self.Train_Step(
                 tokens= tokens,
                 token_lengths= token_lengths,
+                ge2es= ge2es,
                 features= features,
                 feature_lengths= feature_lengths,
                 audios= audios
@@ -356,10 +359,11 @@ class Trainer:
         self.scheduler_dict['Discriminator'].step()
         self.scheduler_dict['HierSpeech'].step()
 
-    def Evaluation_Step(self, tokens, token_lengths, features, feature_lengths, audios):
+    def Evaluation_Step(self, tokens, token_lengths, ge2es, features, feature_lengths, audios):
         loss_dict = {}
         tokens = tokens.to(self.device, non_blocking=True)
         token_lengths = token_lengths.to(self.device, non_blocking=True)
+        ge2es = ge2es.to(self.device, non_blocking=True)
         features = features.to(self.device, non_blocking=True)
         feature_lengths = feature_lengths.to(self.device, non_blocking=True)
         audios = audios.to(self.device, non_blocking=True)
@@ -371,6 +375,7 @@ class Trainer:
             token_predictions, duration_losses, _ = self.model_dict['HierSpeech'](
                 tokens= tokens,
                 token_lengths= token_lengths,
+                ge2es= ge2es,
                 features= features,
                 feature_lengths= feature_lengths,
                 audios= audios
@@ -426,7 +431,7 @@ class Trainer:
         for model in self.model_dict.values():
             model.eval()
 
-        for step, (tokens, token_lengths, features, feature_lengths, audios) in tqdm(
+        for step, (tokens, token_lengths, ge2es, features, feature_lengths, audios) in tqdm(
             enumerate(self.dataloader_dict['Eval'], 1),
             desc='[Evaluation]',
             total= math.ceil(len(self.dataloader_dict['Eval'].dataset) / self.hp.Train.Batch_Size / self.num_gpus)
@@ -434,6 +439,7 @@ class Trainer:
             self.Evaluation_Step(
                 tokens= tokens,
                 token_lengths= token_lengths,
+                ge2es= ge2es,
                 features= features,
                 feature_lengths= feature_lengths,
                 audios= audios
@@ -453,7 +459,8 @@ class Trainer:
             with torch.inference_mode():
                 prediction_audios, *_, alignments = self.model_dict['HierSpeech'](
                     tokens= tokens[index].unsqueeze(0).to(self.device),
-                    token_lengths= token_lengths[index].unsqueeze(0).to(self.device)
+                    token_lengths= token_lengths[index].unsqueeze(0).to(self.device),
+                    ge2es= ge2es[index].unsqueeze(0).to(self.device),
                     )
             
             token_length = token_lengths[index]
@@ -540,13 +547,15 @@ class Trainer:
             model.train()
 
     @torch.inference_mode()
-    def Inference_Step(self, tokens, token_lengths, texts, pronunciations, start_index= 0, tag_step= False):
+    def Inference_Step(self, tokens, token_lengths, ge2es, texts, pronunciations, speakers, start_index= 0, tag_step= False):
         tokens = tokens.to(self.device, non_blocking=True)
         token_lengths = token_lengths.to(self.device, non_blocking=True)
+        ge2es = ge2es.to(self.device, non_blocking=True)
 
         audio_predictions, *_, alignments = self.model_dict['HierSpeech'](
             tokens= tokens,
             token_lengths= token_lengths,
+            ge2es= ge2es
             )
 
         feature_lengths = alignments.sum(dim= [1, 2]).long()
@@ -586,6 +595,7 @@ class Trainer:
             audio_length,
             text,
             pronunciation,
+            speaker,
             file
             ) in enumerate(zip(
             feature_predictions,
@@ -596,9 +606,10 @@ class Trainer:
             audio_lengths,
             texts,
             pronunciations,
+            speakers,
             files
             )):
-            title = 'Text: {}'.format(text if len(text) < 90 else text[:90] + '…')
+            title = 'Text: {}    Speaker: {}'.format(text if len(text) < 90 else text[:90] + '…', speaker)
             new_figure = plt.figure(figsize=(20, 5 * 3), dpi=100)
             ax = plt.subplot2grid((3, 1), (0, 0))
             plt.imshow(feature[:, :feature_length], aspect='auto', origin='lower')
@@ -633,12 +644,12 @@ class Trainer:
             model.eval()
 
         batch_size = self.hp.Inference_Batch_Size or self.hp.Train.Batch_Size
-        for step, (tokens, token_lengths, texts, pronunciations) in tqdm(
+        for step, (tokens, token_lengths, ge2es, texts, pronunciations, speakers) in tqdm(
             enumerate(self.dataloader_dict['Inference']),
             desc='[Inference]',
             total= math.ceil(len(self.dataloader_dict['Inference'].dataset) / batch_size)
             ):
-            self.Inference_Step(tokens, token_lengths, texts, pronunciations, start_index= step * batch_size)
+            self.Inference_Step(tokens, token_lengths, ge2es, texts, pronunciations, speakers, start_index= step * batch_size)
 
         for model in self.model_dict.values():
             model.train()

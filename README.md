@@ -11,7 +11,7 @@ Lee, S. H., Kim, S. B., Lee, J. H., Song, E., Hwang, M. J., & Lee, S. W. HierSpe
 * Structure is referred from the HierSpeech, but I changed several parts.
 * The multi-head attention is changed to linearized attention in FFT Block.
 * Discriminator
-    * According to the advice of the paper [author](https://github.com/sh-lee-prml), **scale discriminator** and **multi stft discriminator** were applied as discriminators.
+    * According to the advice of the paper [author](https://github.com/sh-lee-prml), **multi stft discriminator** were applied as discriminators.
     * To prevent discriminator win, the gradient penalty is applied by R1 regularization.
 
 # Supported dataset
