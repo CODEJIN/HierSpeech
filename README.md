@@ -16,6 +16,8 @@ Lee, S. H., Kim, S. B., Lee, J. H., Song, E., Hwang, M. J., & Lee, S. W. HierSpe
 
 # Supported dataset
 * [LJ Dataset](https://keithito.com/LJ-Speech-Dataset/)
+* [VCTK Dataset](https://datashare.ed.ac.uk/handle/10283/2651)
+    * This repository used the VCTK092 from Torchaudio(https://datashare.is.ed.ac.uk/bitstream/handle/10283/3443/VCTK-Corpus-0.92.zip)
 
 # Hyper parameters
 Before proceeding, please set the pattern, inference, and checkpoint paths in [Hyper_Parameters.yaml](Hyper_Parameters.yaml) according to your environment.

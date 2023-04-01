@@ -29,6 +29,13 @@ def Feature_Stack(features: List[np.ndarray], max_length: Optional[int]= None):
         )
     return features
 
+def Log_F0_Stack(log_f0s, max_length: int= None):
+    max_log_f0_length = max_length or max([len(log_f0) for log_f0 in log_f0s])
+    log_f0s = np.stack(
+        [np.pad(log_f0, [0, max_log_f0_length - len(log_f0)], constant_values= 0.0) for log_f0 in log_f0s],
+        axis= 0
+        )
+    return log_f0s
 def Audio_Stack(audios: List[np.ndarray], max_length: Optional[int]= None):
     max_audio_length = max_length or max([energy.shape[0] for energy in audios])
     audios = np.stack(
@@ -95,7 +102,9 @@ class Dataset(torch.utils.data.Dataset):
         token[0::2] = pattern_dict['Pronunciation']
         token = Text_to_Token(token, self.token_dict)
 
-        return token, pattern_dict['GE2E'], pattern_dict['Spectrogram'], pattern_dict['Audio']
+        log_f0 = np.clip(pattern_dict['Log_F0'], 0.0, np.inf)
+
+        return token, pattern_dict['GE2E'], pattern_dict['Spectrogram'], log_f0, pattern_dict['Audio']
 
     def __len__(self):
         return len(self.patterns)    
@@ -149,7 +158,7 @@ class Collater:
         self.hop_size = hop_size
 
     def __call__(self, batch):
-        tokens, ge2es, features, audios  = zip(*batch)
+        tokens, ge2es, features, log_f0s, audios  = zip(*batch)
         token_lengths = np.array([token.shape[0] for token in tokens])
         feature_lengths = np.array([feature.shape[0] for feature in features])
 
@@ -161,6 +170,9 @@ class Collater:
         features = Feature_Stack(
             features= features
             )
+        log_f0s = Log_F0_Stack(
+            log_f0s= log_f0s
+            )
         audios = Audio_Stack(
             audios= audios
             )
@@ -170,9 +182,10 @@ class Collater:
         ge2es = torch.FloatTensor(ge2es)   # [Batch, GE2E_d]
         features = torch.FloatTensor(features).permute(0, 2, 1)   # [Batch, Feature_d, Featpure_t]
         feature_lengths = torch.LongTensor(feature_lengths)   # [Batch]
+        log_f0s = torch.FloatTensor(log_f0s)    # [Batch, Feature_t]
         audios = torch.FloatTensor(audios)    # [Batch, Audio_t], Audio_t == Feature_t * hop_size
 
-        return tokens, token_lengths, ge2es, features, feature_lengths, audios
+        return tokens, token_lengths, ge2es, features, feature_lengths, log_f0s, audios
 
 class Inference_Collater:
     def __init__(self,

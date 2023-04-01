@@ -12,10 +12,6 @@ GE2E_Size: 256
 
 Encoder:
     Size: 192
-    Conv:
-        Stack: 3
-        Kernel_Size: 5
-        Dropout_Rate: 0.5
     Transformer:
         Stack: 4
         Head: 2
@@ -29,6 +25,12 @@ Duration_Predictor:
     Conv_Stack: 3
     Flow_Stack: 4
     Dropout_Rate: 0.5
+
+Log_F0_Predictor:
+    Stack: 6
+    Kernel_Size: 17
+    LeakyRelu_Negative_Slope: 0.1
+    Dropout_Rate: 0.3
 
 Acoustic_Encoder:
     Conv_Stack: 4
@@ -82,21 +84,21 @@ Discriminator:
     STFT_N_FFT: [1024, 2048, 512, 300, 1200]
     Scale_Pool_Kernel_Size: [1, 4, 8, 16, 32]
 
-Token_Path: 'D:/Datasets/22K.Selvas/Token.yaml'
-GE2E_Path: 'D:/Datasets/22K.Selvas/GE2E.pickle'
-Spectrogram_Range_Info_Path: 'D:/Datasets/22K.Selvas/Spectrogram_Range_Info.yaml'
-Mel_Range_Info_Path: 'D:/Datasets/22K.Selvas/Mel_Range_Info.yaml'
-Log_F0_Info_Path: 'D:/Datasets/22K.Selvas/Log_F0_Info.yaml'
-Log_Energy_Info_Path: 'D:/Datasets/22K.Selvas/Log_Energy_Info.yaml'
-Speaker_Info_Path: 'D:/Datasets/22K.Selvas/Speaker_Info.yaml'
-Emotion_Info_Path: 'D:/Datasets/22K.Selvas/Emotion_Info.yaml'
-Language_Info_Path: 'D:/Datasets/22K.Selvas/Language_Info.yaml'
-Gender_Info_Path: 'D:/Datasets/22K.Selvas/Gender_Info.yaml'
-Language_and_Gender_Info_by_Speaker_Path: 'D:/Datasets/22K.Selvas/Language_and_Gender_Info_by_Speaker.yaml'
+Token_Path: 'D:/Datasets/22K.VCTK/Token.yaml'
+GE2E_Path: 'D:/Datasets/22K.VCTK/GE2E.pickle'
+Spectrogram_Range_Info_Path: 'D:/Datasets/22K.VCTK/Spectrogram_Range_Info.yaml'
+Mel_Range_Info_Path: 'D:/Datasets/22K.VCTK/Mel_Range_Info.yaml'
+Log_F0_Info_Path: 'D:/Datasets/22K.VCTK/Log_F0_Info.yaml'
+Log_Energy_Info_Path: 'D:/Datasets/22K.VCTK/Log_Energy_Info.yaml'
+Speaker_Info_Path: 'D:/Datasets/22K.VCTK/Speaker_Info.yaml'
+Emotion_Info_Path: 'D:/Datasets/22K.VCTK/Emotion_Info.yaml'
+Language_Info_Path: 'D:/Datasets/22K.VCTK/Language_Info.yaml'
+Gender_Info_Path: 'D:/Datasets/22K.VCTK/Gender_Info.yaml'
+Language_and_Gender_Info_by_Speaker_Path: 'D:/Datasets/22K.VCTK/Language_and_Gender_Info_by_Speaker.yaml'
 Train:
     Pattern_Cache: true
     Train_Pattern:
-        Path: 'D:/Datasets/22K.Selvas/Train'
+        Path: 'D:/Datasets/22K.VCTK/Train'
         Metadata_File: 'METADATA.PICKLE'
         Feature_Length:
             Min: 50
@@ -107,7 +109,7 @@ Train:
         Accumulated_Dataset_Epoch: 1 # This is to prevent slow down from torch.utils.data.DataLoader when the number of patterns is small.
         Augmentation_Ratio: 0.10
     Eval_Pattern:
-        Path: 'D:/Datasets/22K.Selvas/Eval'
+        Path: 'D:/Datasets/22K.VCTK/Eval'
         Metadata_File: 'METADATA.PICKLE'
         Feature_Length:
             Min: 50
@@ -158,7 +160,7 @@ Weights_and_Biases:
     Use: false
     Project: 'HierSpeech'
     Entity: 'codejin'
-    Name: 'Sevals'
+    Name: 'VCTK'
     Save_Checkpoint:
         Use: false
         Interval: 50000 # Unlike local, The capacity of WandB is small.

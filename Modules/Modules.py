@@ -22,6 +22,7 @@ class HierSpeech(torch.nn.Module):
             out_features= self.hp.Encoder.Size,
             w_init_gain= 'linear'
             )
+        self.log_f0_predictor = Log_F0_Predictor(self.hp)
         
         self.decoder = Decoder(self.hp)
         
@@ -60,9 +61,10 @@ class HierSpeech(torch.nn.Module):
         tokens: torch.Tensor,
         token_lengths: torch.Tensor,
         ge2es: torch.FloatTensor,
-        features: torch.FloatTensor= None,
-        feature_lengths: torch.Tensor= None,
-        audios: torch.Tensor= None,
+        features: Optional[torch.FloatTensor]= None,
+        feature_lengths: Optional[torch.Tensor]= None,
+        log_f0s: Optional[torch.Tensor]= None,
+        audios: Optional[torch.Tensor]= None,
         length_scales: Union[float, List[float], torch.Tensor]= 1.0,
         ):
         if not features is None and not feature_lengths is None:    # train
@@ -72,6 +74,7 @@ class HierSpeech(torch.nn.Module):
                 ge2es= ge2es,
                 features= features,
                 feature_lengths= feature_lengths,
+                log_f0s= log_f0s,
                 audios= audios
                 )
         else:   #  inference
@@ -89,6 +92,7 @@ class HierSpeech(torch.nn.Module):
         ge2es: torch.FloatTensor,
         features: torch.FloatTensor,
         feature_lengths: torch.Tensor,
+        log_f0s: torch.Tensor,
         audios: torch.Tensor
         ):
         encoding_means, encoding_log_stds, encodings = self.text_encoder(
@@ -130,9 +134,15 @@ class HierSpeech(torch.nn.Module):
 
         encoding_means = encoding_means @ alignments.permute(0, 2, 1)
         encoding_log_stds = encoding_log_stds @ alignments.permute(0, 2, 1)
+        encoding_samples = encoding_means + encoding_log_stds.exp() * torch.randn_like(encoding_log_stds)
+        log_f0_predictions, log_f0_embeddings = self.log_f0_predictor(
+            encodings= encoding_samples,
+            lengths= feature_lengths,
+            log_f0s= log_f0s
+            )
 
         acoustic_samples_slice, offsets = self.segment(
-            patterns= acoustic_samples.permute(0, 2, 1),
+            patterns= (acoustic_samples + log_f0_embeddings).permute(0, 2, 1),
             segment_size= self.hp.Train.Segment_Size,
             lengths= feature_lengths
             )
@@ -185,7 +195,7 @@ class HierSpeech(torch.nn.Module):
             audio_predictions_slice, audios_slice, mel_predictions_slice, mels_slice, \
             encoding_means, encoding_log_stds, linguistic_flows, linguistic_log_stds, \
             linguistic_means, linguistic_log_stds, acoustic_flows, acoustic_log_stds, \
-            token_predictions, duration_losses, alignments
+            duration_losses, token_predictions, log_f0_predictions, alignments
 
     def Inference(
         self,
@@ -212,6 +222,10 @@ class HierSpeech(torch.nn.Module):
         encoding_means = encoding_means @ alignments.permute(0, 2, 1)
         encoding_log_stds = encoding_log_stds @ alignments.permute(0, 2, 1)
         encoding_samples = encoding_means + encoding_log_stds.exp() * torch.randn_like(encoding_log_stds)
+        log_f0_predictions, log_f0_embeddings = self.log_f0_predictor(
+            encodings= encoding_samples,
+            lengths= feature_lengths
+            )
 
         linguistic_samples = self.linguistic_flow(
             x= encoding_samples,
@@ -228,7 +242,7 @@ class HierSpeech(torch.nn.Module):
             )   # [Batch, Enc_d, Feature_t]
 
         audio_predictions = self.decoder(
-            encodings= acoustic_samples,
+            encodings= acoustic_samples + log_f0_embeddings,
             lengths= feature_lengths
             )
 
@@ -236,7 +250,7 @@ class HierSpeech(torch.nn.Module):
             audio_predictions, None, None, None, \
             None, None, None, None, \
             None, None, None, None, \
-            None, alignments
+            None, None, log_f0_predictions, alignments
 
     def Scale_to_Tensor(
         self,
@@ -284,7 +298,7 @@ class Text_Encoder(torch.nn.Module):
                 )
             for index in range(self.hp.Encoder.Transformer.Stack)
             ])
-        
+
         self.projection = Conv1d(
             in_channels= self.hp.Encoder.Size,
             out_channels= self.hp.Encoder.Size * 2,
@@ -309,6 +323,75 @@ class Text_Encoder(torch.nn.Module):
         log_stds = torch.nn.functional.softplus(stds).log()
 
         return means, log_stds, encodings
+
+class Log_F0_Predictor(torch.nn.Module): 
+    def __init__(
+        self,
+        hyper_parameters: Namespace
+        ):
+        super().__init__()
+        self.hp = hyper_parameters
+
+        self.blocks = torch.nn.ModuleList()
+        for index in range(self.hp.Log_F0_Predictor.Stack):
+            block = torch.nn.Sequential(
+                Conv1d(
+                    in_channels= self.hp.Encoder.Size,
+                    out_channels= self.hp.Encoder.Size,
+                    kernel_size= self.hp.Log_F0_Predictor.Kernel_Size,
+                    padding= (self.hp.Log_F0_Predictor.Kernel_Size - 1) // 2,
+                    w_init_gain= 'leaky_relu'
+                    ),
+                LayerNorm(
+                    num_features= self.hp.Encoder.Size,
+                    ),
+                torch.nn.LeakyReLU(
+                    negative_slope= self.hp.Log_F0_Predictor.LeakyRelu_Negative_Slope
+                    ),
+                torch.nn.Dropout(
+                    p= self.hp.Log_F0_Predictor.Dropout_Rate
+                    )
+                )
+            self.blocks.append(block)
+        
+        self.projection = Conv1d(
+            in_channels= self.hp.Encoder.Size,
+            out_channels= 1,
+            kernel_size= 1,
+            w_init_gain= 'linear'
+            )
+        
+        self.embedding = Conv1d(
+            in_channels= 1,
+            out_channels= self.hp.Encoder.Size,
+            kernel_size= 1,
+            w_init_gain= 'linear'
+            )
+
+    def forward(
+        self,
+        encodings: torch.Tensor,
+        lengths: torch.Tensor,
+        log_f0s: Optional[torch.Tensor]= None
+        ) -> Tuple[torch.Tensor, torch.Tensor]:
+        '''
+        tokens: [Batch, Time]
+        '''
+        masks = (~Mask_Generate(lengths= lengths, max_length= torch.ones_like(encodings[0, 0]).sum())).unsqueeze(1).to(encodings.dtype) # float mask
+        
+        x = encodings * masks
+        for block in self.blocks:
+            x = (block(x) + x) * masks
+
+        x = self.projection(x).squeeze(1)
+
+        if log_f0s is None:
+            log_f0s = x
+
+        embeddings = self.embedding(log_f0s.unsqueeze(1))
+
+        return x, embeddings
+
 
 class FFT_Block(torch.nn.Module):
     def __init__(
