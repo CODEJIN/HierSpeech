@@ -11,7 +11,6 @@
 /Modules/monotonic_align/build
 /Modules/monotonic_align/monotonic_align/core.cp39-win_amd64.pyd
 /Modules/monotonic_align/core.c
-/Modules/vits_sources
 
 temp.py
 *.pickle

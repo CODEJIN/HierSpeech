@@ -22,22 +22,22 @@ def Token_Stack(tokens: List[np.ndarray], token_dict, max_length: Optional[int]=
     return tokens
 
 def Feature_Stack(features: List[np.ndarray], max_length: Optional[int]= None):
-    max_feature_length = max_length or max([feature.shape[0] for feature in features])
+    max_feature_length = max_length or max([feature.shape[1] for feature in features])
     features = np.stack(
-        [np.pad(feature, [[0, max_feature_length - feature.shape[0]], [0, 0]], constant_values= -1.0) for feature in features],
+        [np.pad(feature, [[0, 0], [0, max_feature_length - feature.shape[1]]], constant_values= feature.min()) for feature in features],
         axis= 0
         )
     return features
 
-def Log_F0_Stack(log_f0s, max_length: int= None):
-    max_log_f0_length = max_length or max([len(log_f0) for log_f0 in log_f0s])
-    log_f0s = np.stack(
-        [np.pad(log_f0, [0, max_log_f0_length - len(log_f0)], constant_values= 0.0) for log_f0 in log_f0s],
+def F0_Stack(f0s: List[np.ndarray], max_length: int= None):
+    max_f0_length = max_length or max([f0.shape[0] for f0 in f0s])
+    f0s = np.stack(
+        [np.pad(f0, [0, max_f0_length - f0.shape[0]], constant_values= 0.0) for f0 in f0s],
         axis= 0
         )
-    return log_f0s
+    return f0s
 def Audio_Stack(audios: List[np.ndarray], max_length: Optional[int]= None):
-    max_audio_length = max_length or max([energy.shape[0] for energy in audios])
+    max_audio_length = max_length or max([audio.shape[0] for audio in audios])
     audios = np.stack(
         [np.pad(audio, [0, max_audio_length - audio.shape[0]], constant_values= 0.0) for audio in audios],
         axis= 0
@@ -48,6 +48,7 @@ class Dataset(torch.utils.data.Dataset):
     def __init__(
         self,
         token_dict: Dict[str, int],
+        f0_info_dict: Dict[str, Dict[str, float]],
         pattern_path: str,
         metadata_file: str,
         feature_length_min: int,
@@ -60,6 +61,7 @@ class Dataset(torch.utils.data.Dataset):
         ):
         super().__init__()
         self.token_dict = token_dict
+        self.f0_info_dict = f0_info_dict
         self.pattern_path = pattern_path
 
         metadata_dict = pickle.load(open(
@@ -96,15 +98,17 @@ class Dataset(torch.utils.data.Dataset):
     
     def Pattern_LRU_Cache(self, path: str):
         pattern_dict = pickle.load(open(path, 'rb'))
+        speaker = pattern_dict['Speaker']
         
         # padding between tokens
         token = ['<P>'] * (len(pattern_dict['Pronunciation']) * 2 - 1)
         token[0::2] = pattern_dict['Pronunciation']
         token = Text_to_Token(token, self.token_dict)
 
-        log_f0 = np.clip(pattern_dict['Log_F0'], 0.0, np.inf)
+        f0 = pattern_dict['F0']        
+        f0 = np.where(f0 != 0.0, (f0 - self.f0_info_dict[speaker]['Mean']) / self.f0_info_dict[speaker]['Std'], 0.0)
 
-        return token, pattern_dict['GE2E'], pattern_dict['Spectrogram'], log_f0, pattern_dict['Audio']
+        return token, pattern_dict['GE2E'], pattern_dict['Spectrogram'], f0, pattern_dict['Audio']
 
     def __len__(self):
         return len(self.patterns)    
@@ -158,9 +162,9 @@ class Collater:
         self.hop_size = hop_size
 
     def __call__(self, batch):
-        tokens, ge2es, features, log_f0s, audios  = zip(*batch)
+        tokens, ge2es, features, f0s, audios  = zip(*batch)
         token_lengths = np.array([token.shape[0] for token in tokens])
-        feature_lengths = np.array([feature.shape[0] for feature in features])
+        feature_lengths = np.array([feature.shape[1] for feature in features])
 
         tokens = Token_Stack(
             tokens= tokens,
@@ -170,8 +174,8 @@ class Collater:
         features = Feature_Stack(
             features= features
             )
-        log_f0s = Log_F0_Stack(
-            log_f0s= log_f0s
+        f0s = F0_Stack(
+            f0s= f0s
             )
         audios = Audio_Stack(
             audios= audios
@@ -180,12 +184,12 @@ class Collater:
         tokens = torch.LongTensor(tokens)   # [Batch, Token_t]
         token_lengths = torch.LongTensor(token_lengths)   # [Batch]
         ge2es = torch.FloatTensor(ge2es)   # [Batch, GE2E_d]
-        features = torch.FloatTensor(features).permute(0, 2, 1)   # [Batch, Feature_d, Featpure_t]
+        features = torch.FloatTensor(features)  # [Batch, Feature_d, Featpure_t]
         feature_lengths = torch.LongTensor(feature_lengths)   # [Batch]
-        log_f0s = torch.FloatTensor(log_f0s)    # [Batch, Feature_t]
+        f0s = torch.FloatTensor(f0s)    # [Batch, Feature_t]
         audios = torch.FloatTensor(audios)    # [Batch, Audio_t], Audio_t == Feature_t * hop_size
 
-        return tokens, token_lengths, ge2es, features, feature_lengths, log_f0s, audios
+        return tokens, token_lengths, ge2es, features, feature_lengths, f0s, audios
 
 class Inference_Collater:
     def __init__(self,

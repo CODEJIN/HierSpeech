@@ -22,7 +22,7 @@ class HierSpeech(torch.nn.Module):
             out_features= self.hp.Encoder.Size,
             w_init_gain= 'linear'
             )
-        self.log_f0_predictor = Log_F0_Predictor(self.hp)
+        self.log_f0_predictor = F0_Predictor(self.hp)
         
         self.decoder = Decoder(self.hp)
         
@@ -324,7 +324,7 @@ class Text_Encoder(torch.nn.Module):
 
         return means, log_stds, encodings
 
-class Log_F0_Predictor(torch.nn.Module): 
+class F0_Predictor(torch.nn.Module): 
     def __init__(
         self,
         hyper_parameters: Namespace
@@ -333,23 +333,23 @@ class Log_F0_Predictor(torch.nn.Module):
         self.hp = hyper_parameters
 
         self.blocks = torch.nn.ModuleList()
-        for index in range(self.hp.Log_F0_Predictor.Stack):
+        for index in range(self.hp.F0_Predictor.Stack):
             block = torch.nn.Sequential(
                 Conv1d(
                     in_channels= self.hp.Encoder.Size,
                     out_channels= self.hp.Encoder.Size,
-                    kernel_size= self.hp.Log_F0_Predictor.Kernel_Size,
-                    padding= (self.hp.Log_F0_Predictor.Kernel_Size - 1) // 2,
+                    kernel_size= self.hp.F0_Predictor.Kernel_Size,
+                    padding= (self.hp.F0_Predictor.Kernel_Size - 1) // 2,
                     w_init_gain= 'leaky_relu'
                     ),
                 LayerNorm(
                     num_features= self.hp.Encoder.Size,
                     ),
                 torch.nn.LeakyReLU(
-                    negative_slope= self.hp.Log_F0_Predictor.LeakyRelu_Negative_Slope
+                    negative_slope= self.hp.F0_Predictor.LeakyRelu_Negative_Slope
                     ),
                 torch.nn.Dropout(
-                    p= self.hp.Log_F0_Predictor.Dropout_Rate
+                    p= self.hp.F0_Predictor.Dropout_Rate
                     )
                 )
             self.blocks.append(block)

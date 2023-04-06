@@ -26,7 +26,7 @@ Duration_Predictor:
     Flow_Stack: 4
     Dropout_Rate: 0.5
 
-Log_F0_Predictor:
+F0_Predictor:
     Stack: 6
     Kernel_Size: 17
     LeakyRelu_Negative_Slope: 0.1
@@ -88,15 +88,15 @@ Token_Path: 'D:/Datasets/22K.VCTK/Token.yaml'
 GE2E_Path: 'D:/Datasets/22K.VCTK/GE2E.pickle'
 Spectrogram_Range_Info_Path: 'D:/Datasets/22K.VCTK/Spectrogram_Range_Info.yaml'
 Mel_Range_Info_Path: 'D:/Datasets/22K.VCTK/Mel_Range_Info.yaml'
-Log_F0_Info_Path: 'D:/Datasets/22K.VCTK/Log_F0_Info.yaml'
-Log_Energy_Info_Path: 'D:/Datasets/22K.VCTK/Log_Energy_Info.yaml'
+F0_Info_Path: 'D:/Datasets/22K.VCTK/F0_Info.yaml'
+Energy_Info_Path: 'D:/Datasets/22K.VCTK/Energy_Info.yaml'
 Speaker_Info_Path: 'D:/Datasets/22K.VCTK/Speaker_Info.yaml'
 Emotion_Info_Path: 'D:/Datasets/22K.VCTK/Emotion_Info.yaml'
 Language_Info_Path: 'D:/Datasets/22K.VCTK/Language_Info.yaml'
 Gender_Info_Path: 'D:/Datasets/22K.VCTK/Gender_Info.yaml'
 Language_and_Gender_Info_by_Speaker_Path: 'D:/Datasets/22K.VCTK/Language_and_Gender_Info_by_Speaker.yaml'
 Train:
-    Pattern_Cache: true
+    Pattern_Cache: false
     Train_Pattern:
         Path: 'D:/Datasets/22K.VCTK/Train'
         Metadata_File: 'METADATA.PICKLE'

@@ -85,9 +85,11 @@ class Trainer:
     def Dataset_Generate(self):
         token_dict = yaml.load(open(self.hp.Token_Path, 'r', encoding= 'utf-8-sig'), Loader=yaml.Loader)
         ge2e_dict = pickle.load(open(self.hp.GE2E_Path, 'rb'))
+        f0_info_dict = yaml.load(open(self.hp.F0_Info_Path, 'r'), Loader=yaml.Loader)
 
         train_dataset = Dataset(
             token_dict= token_dict,
+            f0_info_dict= f0_info_dict,
             pattern_path= self.hp.Train.Train_Pattern.Path,
             metadata_file= self.hp.Train.Train_Pattern.Metadata_File,
             feature_length_min= max(self.hp.Train.Train_Pattern.Feature_Length.Min, self.hp.Train.Segment_Size),
@@ -100,6 +102,7 @@ class Trainer:
             )
         eval_dataset = Dataset(
             token_dict= token_dict,
+            f0_info_dict= f0_info_dict,
             pattern_path= self.hp.Train.Eval_Pattern.Path,
             metadata_file= self.hp.Train.Eval_Pattern.Metadata_File,
             feature_length_min= max(self.hp.Train.Train_Pattern.Feature_Length.Min, self.hp.Train.Segment_Size),
@@ -266,7 +269,7 @@ class Trainer:
                     mel_predictions_slice,
                     mels_slice
                     ).mean()
-                loss_dict['Log_F0'] = (self.criterion_dict['MSE'](
+                loss_dict['F0'] = (self.criterion_dict['MSE'](
                     log_f0_predictions.float(),
                     log_f0s
                     ) * ~feature_masks.unsqueeze(1)).mean()
@@ -298,7 +301,7 @@ class Trainer:
         self.optimizer_dict['HierSpeech'].zero_grad()
         self.scaler.scale(
             loss_dict['STFT'] * self.hp.Train.Learning_Rate.STFT_Loss_Lambda +
-            loss_dict['Log_F0'] +
+            loss_dict['F0'] +
             loss_dict['Duration'] +
             loss_dict['TokenCTC'] +
             loss_dict['Encoding_KLD'] +
@@ -406,7 +409,7 @@ class Trainer:
                     mel_predictions_slice,
                     mels_slice
                     ).mean()
-                loss_dict['Log_F0'] = (self.criterion_dict['MSE'](
+                loss_dict['F0'] = (self.criterion_dict['MSE'](
                     log_f0_predictions,
                     log_f0s
                     ) * ~feature_masks.unsqueeze(1)).mean()
@@ -523,8 +526,8 @@ class Trainer:
                 'Feature/Target': (target_feature, None, 'auto', None, None, None),
                 'Feature/Prediction': (prediction_feature, None, 'auto', None, None, None),
                 'Duration/Prediction': (prediction_alignment.T, None, 'auto', None, None, None),
-                'Log_F0/Target': (target_log_f0, None, 'auto', None, None, None),
-                'Log_F0/Prediction': (prediction_log_f0, None, 'auto', None, None, None),
+                'F0/Target': (target_log_f0, None, 'auto', None, None, None),
+                'F0/Prediction': (prediction_log_f0, None, 'auto', None, None, None),
                 }
             audio_dict = {
                 'Audio/Target': (target_audio, self.hp.Sound.Sample_Rate),
@@ -547,11 +550,11 @@ class Trainer:
                     data= {
                         'Evaluation.Feature.Target': wandb.Image(target_feature),
                         'Evaluation.Feature.Prediction': wandb.Image(prediction_feature),
-                        'Evaluation.Log_F0': wandb.plot.line_series(
-                            xs= np.arange(target_log_f0.size(0)),
+                        'Evaluation.F0': wandb.plot.line_series(
+                            xs= np.arange(target_log_f0.shape[0]),
                             ys= [target_log_f0, prediction_log_f0],
                             keys= ['Target', 'Prediction'],
-                            title= 'Log_F0',
+                            title= 'F0',
                             xname= 'Feature_t'
                             ),
                         'Evaluation.Alignment': wandb.Image(prediction_alignment.T),

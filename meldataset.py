@@ -32,7 +32,7 @@ import numpy as np
 from librosa.util import normalize
 from scipy.io.wavfile import read
 from librosa.filters import mel as librosa_mel_fn
-import pyworld as pw
+# import pyworld as pw
 
 MAX_WAV_VALUE = 32768.0
 
@@ -241,19 +241,19 @@ def vtlp(y: torch.Tensor, n_fft: int, sampling_rate: int, hop_size: int, win_siz
 
     return y_warp
 
-def get_monotonic_wav(audio: np.array, sampling_rate: int, mean: float):
-    audio = audio.astype('double')
-    _f0, t = pw.dio(audio, sampling_rate)
-    f0 = pw.stonemask(audio, _f0, t, sampling_rate)  # pitch refinement
-    sp = pw.cheaptrick(audio, f0, t, sampling_rate)  # extract smoothed spectrogram
-    ap = pw.d4c(audio, f0, t, sampling_rate)         # extract aperiodicity
+# def get_monotonic_wav(audio: np.array, sampling_rate: int, mean: float):
+#     audio = audio.astype('double')
+#     _f0, t = pw.dio(audio, sampling_rate)
+#     f0 = pw.stonemask(audio, _f0, t, sampling_rate)  # pitch refinement
+#     sp = pw.cheaptrick(audio, f0, t, sampling_rate)  # extract smoothed spectrogram
+#     ap = pw.d4c(audio, f0, t, sampling_rate)         # extract aperiodicity
     
-    f0 = np.where(f0 > 0, mean, 0.0)
-    audio_monotonic = pw.synthesize(f0, sp, ap, sampling_rate) # synthesize an utterance using the parameters
-    audio_monotonic = np.pad(audio_monotonic, (0, max(0, audio.shape[0] - audio_monotonic.shape[0])))
-    audio_monotonic = np.clip(audio_monotonic, -1.0, 1.0)
+#     f0 = np.where(f0 > 0, mean, 0.0)
+#     audio_monotonic = pw.synthesize(f0, sp, ap, sampling_rate) # synthesize an utterance using the parameters
+#     audio_monotonic = np.pad(audio_monotonic, (0, max(0, audio.shape[0] - audio_monotonic.shape[0])))
+#     audio_monotonic = np.clip(audio_monotonic, -1.0, 1.0)
 
-    return audio_monotonic[:audio.shape[0]].astype(audio.dtype)
+#     return audio_monotonic[:audio.shape[0]].astype(audio.dtype)
 
 
 

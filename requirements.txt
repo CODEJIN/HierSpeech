@@ -8,5 +8,4 @@ unidecode
 tqdm
 hgtk
 pysptk
-pyworld
 transformers
