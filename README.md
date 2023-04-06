@@ -8,11 +8,15 @@ Lee, S. H., Kim, S. B., Lee, J. H., Song, E., Hwang, M. J., & Lee, S. W. HierSpe
 ```
 
 # Structure
-* Structure is referred from the HierSpeech, but I changed several parts.
-* The multi-head attention is changed to linearized attention in FFT Block.
+* The structure is derived from HierSpeech, but I made several modifications.
+* The multi-head attention in the FFT Block has been replaced with linearized attention.
 * Discriminator
-    * According to the advice of the paper [author](https://github.com/sh-lee-prml), **multi stft discriminator** were applied as discriminators.
-    * To prevent discriminator win, the gradient penalty is applied by R1 regularization.
+    * Following the advice of the [author](https://github.com/sh-lee-prml) of the paper, **multi stft discriminator** have been applied.
+    * To prevent the discriminator from winning, the gradient penalty is applied through R1 regularization.
+* Speaker embeddings are generated using d-vectors from the GE2E algorithm.
+* F0 values are additionally used.
+    * I am not sure if this improves the quality.
+    * This is done to control the pitch.
 
 # Supported dataset
 * [LJ Dataset](https://keithito.com/LJ-Speech-Dataset/)
