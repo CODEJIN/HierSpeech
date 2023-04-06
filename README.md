@@ -13,10 +13,6 @@ Lee, S. H., Kim, S. B., Lee, J. H., Song, E., Hwang, M. J., & Lee, S. W. HierSpe
 * Discriminator
     * Following the advice of the [author](https://github.com/sh-lee-prml) of the paper, **multi stft discriminator** have been applied.
     * To prevent the discriminator from winning, the gradient penalty is applied through R1 regularization.
-* Speaker embeddings are generated using d-vectors from the GE2E algorithm.
-* F0 values are additionally used.
-    * I am not sure if this improves the quality.
-    * This is done to control the pitch.
 
 # Supported dataset
 * [LJ Dataset](https://keithito.com/LJ-Speech-Dataset/)
@@ -109,6 +105,3 @@ CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 OMP_NUM_THREADS=32 python -m torch.distribu
 ```
 
 * I recommend to check the [multi_gpu.sh](./multi_gpu.sh).
-
-# TODO
-* F0(pitch) apply

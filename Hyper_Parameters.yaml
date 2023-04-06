@@ -84,21 +84,21 @@ Discriminator:
     STFT_N_FFT: [1024, 2048, 512, 300, 1200]
     Scale_Pool_Kernel_Size: [1, 4, 8, 16, 32]
 
-Token_Path: 'D:/Datasets/22K.VCTK/Token.yaml'
-GE2E_Path: 'D:/Datasets/22K.VCTK/GE2E.pickle'
-Spectrogram_Range_Info_Path: 'D:/Datasets/22K.VCTK/Spectrogram_Range_Info.yaml'
-Mel_Range_Info_Path: 'D:/Datasets/22K.VCTK/Mel_Range_Info.yaml'
-F0_Info_Path: 'D:/Datasets/22K.VCTK/F0_Info.yaml'
-Energy_Info_Path: 'D:/Datasets/22K.VCTK/Energy_Info.yaml'
-Speaker_Info_Path: 'D:/Datasets/22K.VCTK/Speaker_Info.yaml'
-Emotion_Info_Path: 'D:/Datasets/22K.VCTK/Emotion_Info.yaml'
-Language_Info_Path: 'D:/Datasets/22K.VCTK/Language_Info.yaml'
-Gender_Info_Path: 'D:/Datasets/22K.VCTK/Gender_Info.yaml'
-Language_and_Gender_Info_by_Speaker_Path: 'D:/Datasets/22K.VCTK/Language_and_Gender_Info_by_Speaker.yaml'
+Token_Path: 'D:/Datasets/22K.LJ/Token.yaml'
+GE2E_Path: 'D:/Datasets/22K.LJ/GE2E.pickle'
+Spectrogram_Range_Info_Path: 'D:/Datasets/22K.LJ/Spectrogram_Range_Info.yaml'
+Mel_Range_Info_Path: 'D:/Datasets/22K.LJ/Mel_Range_Info.yaml'
+F0_Info_Path: 'D:/Datasets/22K.LJ/F0_Info.yaml'
+Energy_Info_Path: 'D:/Datasets/22K.LJ/Energy_Info.yaml'
+Speaker_Info_Path: 'D:/Datasets/22K.LJ/Speaker_Info.yaml'
+Emotion_Info_Path: 'D:/Datasets/22K.LJ/Emotion_Info.yaml'
+Language_Info_Path: 'D:/Datasets/22K.LJ/Language_Info.yaml'
+Gender_Info_Path: 'D:/Datasets/22K.LJ/Gender_Info.yaml'
+Language_and_Gender_Info_by_Speaker_Path: 'D:/Datasets/22K.LJ/Language_and_Gender_Info_by_Speaker.yaml'
 Train:
     Pattern_Cache: false
     Train_Pattern:
-        Path: 'D:/Datasets/22K.VCTK/Train'
+        Path: 'D:/Datasets/22K.LJ/Train'
         Metadata_File: 'METADATA.PICKLE'
         Feature_Length:
             Min: 50
@@ -109,7 +109,7 @@ Train:
         Accumulated_Dataset_Epoch: 1 # This is to prevent slow down from torch.utils.data.DataLoader when the number of patterns is small.
         Augmentation_Ratio: 0.10
     Eval_Pattern:
-        Path: 'D:/Datasets/22K.VCTK/Eval'
+        Path: 'D:/Datasets/22K.LJ/Eval'
         Metadata_File: 'METADATA.PICKLE'
         Feature_Length:
             Min: 50
@@ -142,12 +142,6 @@ Train:
             'Do not count your chickens before they hatch.',
             'If you laugh, blessings will come your way.'
             ]
-        Speaker: [
-            'VCTK.P245',
-            'VCTK.P294',
-            'VCTK.P339',
-            'VCTK.S5',
-            ]
 
 Inference_Batch_Size: 16
 
@@ -160,7 +154,7 @@ Weights_and_Biases:
     Use: false
     Project: 'HierSpeech'
     Entity: 'codejin'
-    Name: 'VCTK'
+    Name: 'LJ'
     Save_Checkpoint:
         Use: false
         Interval: 50000 # Unlike local, The capacity of WandB is small.
