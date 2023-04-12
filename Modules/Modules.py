@@ -668,9 +668,10 @@ class Linguistic_Encoder(Feature_Encoder):
         hyper_parameters: Namespace
         ):
         self.hp = hyper_parameters
+        self.wav2vec2_feature_size = 1024
         
         super().__init__(
-            in_channels= 512,
+            in_channels= self.wav2vec2_feature_size,
             out_channels= self.hp.Encoder.Size,
             conv_stack= self.hp.Linguistic_Encoder.Conv_Stack,
             kernel_size= self.hp.Linguistic_Encoder.Kernel_Size,
@@ -678,11 +679,11 @@ class Linguistic_Encoder(Feature_Encoder):
             dropout_rate= self.hp.Linguistic_Encoder.Dropout_Rate,
             )
         
-        wav2vec2 = Wav2Vec2ForCTC.from_pretrained('facebook/wav2vec2-xls-r-2b')
-        wav2vec2.freeze_feature_encoder()
-        self.feature_extractor = wav2vec2.wav2vec2.feature_extractor
+        self.wav2vec2 = Wav2Vec2ForCTC.from_pretrained('facebook/wav2vec2-xls-r-300m')
+        self.feature_extractor = lambda x: self.wav2vec2(x, output_hidden_states= True).hidden_states[11]        
+        
         self.norm = LayerNorm(
-            num_features= 512
+            num_features= self.wav2vec2_feature_size
             )
 
     def forward(
@@ -699,8 +700,8 @@ class Linguistic_Encoder(Feature_Encoder):
             features = self.feature_extractor(audios)
             features = torchvision.transforms.functional.resize(
                 features.unsqueeze(1),
-                [512, lengths.max()]
-                ).squeeze(1)
+                [lengths.max(), self.wav2vec2_feature_size]
+                ).squeeze(1).permute(0, 2, 1)
         features = self.norm(features)
 
         return super().forward(
