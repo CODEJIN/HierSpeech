@@ -13,11 +13,11 @@ GE2E_Size: 256
 Encoder:
     Size: 192
     Transformer:
-        Stack: 4
+        Stack: 6
         Head: 2
         Dropout_Rate: 0.1
         FFN:
-            Kernel_Size: 9
+            Kernel_Size: 3
             Dropout_Rate: 0.1
 
 Duration_Predictor:
@@ -33,7 +33,7 @@ F0_Predictor:
     Dropout_Rate: 0.3
 
 Acoustic_Encoder:
-    Conv_Stack: 4
+    Conv_Stack: 16
     Kernel_Size: 5
     Dilation_Rate: 1
     Dropout_Rate: 0.1
@@ -52,7 +52,7 @@ Token_Predictor:
         Dropout_Rate: 0.1
     
 Linguistic_Encoder:
-    Conv_Stack: 4
+    Conv_Stack: 16
     Kernel_Size: 5
     Dilation_Rate: 1
     Dropout_Rate: 0.1
