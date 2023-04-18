@@ -123,7 +123,11 @@ Train:
     Learning_Rate:
         Initial: 2.0e-4
         Decay: 0.999875
-        STFT_Loss_Lambda: 45.0
+        Lambda:
+            STFT: 45.0
+            F0: 45.0
+            Token_CTC: 45.0
+            Feature_Map: 2.0
     ADAM:
         Beta1: 0.8
         Beta2: 0.99
