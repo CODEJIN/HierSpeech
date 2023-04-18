@@ -13,11 +13,11 @@ GE2E_Size: 256
 Encoder:
     Size: 192
     Transformer:
-        Stack: 4
+        Stack: 6
         Head: 2
         Dropout_Rate: 0.1
         FFN:
-            Kernel_Size: 9
+            Kernel_Size: 3
             Dropout_Rate: 0.1
 
 Duration_Predictor:
@@ -33,7 +33,7 @@ F0_Predictor:
     Dropout_Rate: 0.3
 
 Acoustic_Encoder:
-    Conv_Stack: 4
+    Conv_Stack: 16
     Kernel_Size: 5
     Dilation_Rate: 1
     Dropout_Rate: 0.1
@@ -52,7 +52,7 @@ Token_Predictor:
         Dropout_Rate: 0.1
     
 Linguistic_Encoder:
-    Conv_Stack: 4
+    Conv_Stack: 16
     Kernel_Size: 5
     Dilation_Rate: 1
     Dropout_Rate: 0.1
@@ -123,7 +123,10 @@ Train:
     Learning_Rate:
         Initial: 2.0e-4
         Decay: 0.999875
-        STFT_Loss_Lambda: 45.0
+        Lambda:
+            STFT: 45.0
+            Token_CTC: 45.0
+            Feature_Map: 2.0
     ADAM:
         Beta1: 0.8
         Beta2: 0.99

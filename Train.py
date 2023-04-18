@@ -280,18 +280,18 @@ class Trainer:
                     flow_log_stds= acoustic_log_stds,
                     masks= ~feature_masks.unsqueeze(1)
                     )
-                loss_dict['Adversarial'] = \
-                    Feature_Map_Loss(feature_maps_list_for_real, feature_maps_list_for_fake) + \
-                    Generator_Loss(discriminations_list_for_fake)
+                loss_dict['Adversarial'] = Generator_Loss(discriminations_list_for_fake)
+                loss_dict['Feature_Map'] = Feature_Map_Loss(feature_maps_list_for_real, feature_maps_list_for_fake)
             
         self.optimizer_dict['HierSpeech'].zero_grad()
         self.scaler.scale(
-            loss_dict['STFT'] * self.hp.Train.Learning_Rate.STFT_Loss_Lambda +
+            loss_dict['STFT'] * self.hp.Train.Learning_Rate.Lambda.STFT +
             loss_dict['Duration'] +
-            loss_dict['TokenCTC'] +
+            loss_dict['TokenCTC'] * self.hp.Train.Learning_Rate.Lambda.Token_CTC +
             loss_dict['Encoding_KLD'] +
             loss_dict['Linguistic_KLD'] +
-            loss_dict['Adversarial']
+            loss_dict['Adversarial'] +
+            loss_dict['Feature_Map'] * self.hp.Train.Learning_Rate.Lambda.Feature_Map
             ).backward()
 
         self.scaler.unscale_(self.optimizer_dict['HierSpeech'])
@@ -411,9 +411,8 @@ class Trainer:
                     )
                 loss_dict['Discrimination'] = Discriminator_Loss(discriminations_list_for_real, discriminations_list_for_fake)
                 loss_dict['R1'] = self.criterion_dict['R1'](discriminations_list_for_real, audios_slice)
-                loss_dict['Adversarial'] = \
-                    Feature_Map_Loss(feature_maps_list_for_real, feature_maps_list_for_fake) + \
-                    Generator_Loss(discriminations_list_for_fake)
+                loss_dict['Adversarial'] = Generator_Loss(discriminations_list_for_fake)
+                loss_dict['Feature_Map'] = Feature_Map_Loss(feature_maps_list_for_real, feature_maps_list_for_fake)
 
         for tag, loss in loss_dict.items():
             loss = reduce_tensor(loss.data, self.num_gpus).item() if self.num_gpus > 1 else loss.item()

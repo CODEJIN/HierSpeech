@@ -252,7 +252,7 @@ def Feature_Map_Loss(feature_maps_list_for_real, feature_maps_list_for_fake):
             feature_maps_list_for_real,
             feature_maps_list_for_fake
             )
-        ]).sum() * 2.0
+        ]).sum()
 
 def Discriminator_Loss(discriminations_list_for_real, discriminations_list_for_fake):
     return torch.stack([
