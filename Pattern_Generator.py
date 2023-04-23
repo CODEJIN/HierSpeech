@@ -327,7 +327,7 @@ def Selvas_Info_Load(path: str):
         for path, speaker in speaker_dict.items()
         }
 
-    print('Emotion info generated: {}'.format(len(paths)))
+    print('Selvas info generated: {}'.format(len(paths)))
     return paths, text_dict, pronunciation_dict, speaker_dict, emotion_dict, language_dict, gender_dict
 
 def KSS_Info_Load(path: str):
@@ -809,8 +809,8 @@ def Metadata_Generate(eval: bool= False):
                     ]):
                     continue
                 new_metadata_dict['Audio_Length_Dict'][file] = pattern_dict['Audio'].shape[0]
-                new_metadata_dict['Spectrogram_Length_Dict'][file] = pattern_dict['Spectrogram'].shape[0]
-                new_metadata_dict['Mel_Length_Dict'][file] = pattern_dict['Mel'].shape[0]
+                new_metadata_dict['Spectrogram_Length_Dict'][file] = pattern_dict['Spectrogram'].shape[1]
+                new_metadata_dict['Mel_Length_Dict'][file] = pattern_dict['Mel'].shape[1]
                 new_metadata_dict['F0_Length_Dict'][file] = pattern_dict['F0'].shape[0]
                 new_metadata_dict['Energy_Length_Dict'][file] = pattern_dict['Energy'].shape[0]
                 new_metadata_dict['Speaker_Dict'][file] = pattern_dict['Speaker']

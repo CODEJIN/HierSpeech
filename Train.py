@@ -212,27 +212,27 @@ class Trainer:
         # if self.gpu_id == 0:
         #     logging.info(self.model_dict['HierSpeech'])
 
-    def Train_Step(self, tokens, token_lengths, ge2es, features, feature_lengths, log_f0s, audios):
+    def Train_Step(self, tokens, token_lengths, ge2es, features, feature_lengths, f0s, audios):
         loss_dict = {}
         tokens = tokens.to(self.device, non_blocking=True)
         token_lengths = token_lengths.to(self.device, non_blocking=True)
         ge2es = ge2es.to(self.device, non_blocking=True)
         features = features.to(self.device, non_blocking=True)
         feature_lengths = feature_lengths.to(self.device, non_blocking=True)
-        log_f0s = log_f0s.to(self.device, non_blocking=True)
+        f0s = f0s.to(self.device, non_blocking=True)
         audios = audios.to(self.device, non_blocking=True)
 
         with torch.cuda.amp.autocast(enabled= self.hp.Use_Mixed_Precision):
             audio_predictions_slice, audios_slice, mel_predictions_slice, mels_slice, \
             encoding_means, encoding_log_stds, linguistic_flows, linguistic_log_stds, \
             linguistic_means, linguistic_log_stds, acoustic_flows, acoustic_log_stds, \
-            duration_losses, token_predictions, log_f0_predictions, _ = self.model_dict['HierSpeech'](
+            duration_losses, token_predictions, f0_predictions, _ = self.model_dict['HierSpeech'](
                 tokens= tokens,
                 token_lengths= token_lengths,
                 ge2es= ge2es,
                 features= features,
                 feature_lengths= feature_lengths,
-                log_f0s= log_f0s,
+                f0s= f0s,
                 audios= audios
                 )
             
@@ -270,8 +270,8 @@ class Trainer:
                     mels_slice
                     ).mean()
                 loss_dict['F0'] = (self.criterion_dict['MSE'](
-                    log_f0_predictions.float(),
-                    log_f0s
+                    f0_predictions.float(),
+                    f0s
                     ) * ~feature_masks.unsqueeze(1)).mean()
                 loss_dict['Duration'] = duration_losses.float().sum()
                 loss_dict['TokenCTC'] = self.criterion_dict['TokenCTC'](
@@ -328,14 +328,14 @@ class Trainer:
             self.scalar_dict['Train']['Loss/{}'.format(tag)] += loss
 
     def Train_Epoch(self):
-        for tokens, token_lengths, ge2es, features, feature_lengths, log_f0s, audios in self.dataloader_dict['Train']:
+        for tokens, token_lengths, ge2es, features, feature_lengths, f0s, audios in self.dataloader_dict['Train']:
             self.Train_Step(
                 tokens= tokens,
                 token_lengths= token_lengths,
                 ge2es= ge2es,
                 features= features,
                 feature_lengths= feature_lengths,
-                log_f0s= log_f0s,
+                f0s= f0s,
                 audios= audios
                 )
 
@@ -372,27 +372,27 @@ class Trainer:
         self.scheduler_dict['Discriminator'].step()
         self.scheduler_dict['HierSpeech'].step()
 
-    def Evaluation_Step(self, tokens, token_lengths, ge2es, features, feature_lengths, log_f0s, audios):
+    def Evaluation_Step(self, tokens, token_lengths, ge2es, features, feature_lengths, f0s, audios):
         loss_dict = {}
         tokens = tokens.to(self.device, non_blocking=True)
         token_lengths = token_lengths.to(self.device, non_blocking=True)
         ge2es = ge2es.to(self.device, non_blocking=True)
         features = features.to(self.device, non_blocking=True)
         feature_lengths = feature_lengths.to(self.device, non_blocking=True)
-        log_f0s = log_f0s.to(self.device, non_blocking=True)
+        f0s = f0s.to(self.device, non_blocking=True)
         audios = audios.to(self.device, non_blocking=True)
 
         with torch.cuda.amp.autocast(enabled= self.hp.Use_Mixed_Precision):
             audio_predictions_slice, audios_slice, mel_predictions_slice, mels_slice, \
             encoding_means, encoding_log_stds, linguistic_flows, linguistic_log_stds, \
             linguistic_means, linguistic_log_stds, acoustic_flows, acoustic_log_stds, \
-            duration_losses, token_predictions, log_f0_predictions, _ = self.model_dict['HierSpeech'](
+            duration_losses, token_predictions, f0_predictions, _ = self.model_dict['HierSpeech'](
                 tokens= tokens,
                 token_lengths= token_lengths,
                 ge2es= ge2es,
                 features= features,
                 feature_lengths= feature_lengths,
-                log_f0s= log_f0s,
+                f0s= f0s,
                 audios= audios
                 )
 
@@ -410,8 +410,8 @@ class Trainer:
                     mels_slice
                     ).mean()
                 loss_dict['F0'] = (self.criterion_dict['MSE'](
-                    log_f0_predictions,
-                    log_f0s
+                    f0_predictions,
+                    f0s
                     ) * ~feature_masks.unsqueeze(1)).mean()
                 loss_dict['Duration'] = duration_losses.float().sum()
                 loss_dict['TokenCTC'] = self.criterion_dict['TokenCTC'](
@@ -449,7 +449,7 @@ class Trainer:
         for model in self.model_dict.values():
             model.eval()
 
-        for step, (tokens, token_lengths, ge2es, features, feature_lengths, log_f0s, audios) in tqdm(
+        for step, (tokens, token_lengths, ge2es, features, feature_lengths, f0s, audios) in tqdm(
             enumerate(self.dataloader_dict['Eval'], 1),
             desc='[Evaluation]',
             total= math.ceil(len(self.dataloader_dict['Eval'].dataset) / self.hp.Train.Batch_Size / self.num_gpus)
@@ -460,7 +460,7 @@ class Trainer:
                 ge2es= ge2es,
                 features= features,
                 feature_lengths= feature_lengths,
-                log_f0s= log_f0s,
+                f0s= f0s,
                 audios= audios
                 )
 
@@ -476,7 +476,7 @@ class Trainer:
             index = np.random.randint(0, tokens.size(0))
 
             with torch.inference_mode():
-                prediction_audios, *_, log_f0_predictions, alignments = self.model_dict['HierSpeech'](
+                prediction_audios, *_, f0_predictions, alignments = self.model_dict['HierSpeech'](
                     tokens= tokens[index].unsqueeze(0).to(self.device),
                     token_lengths= token_lengths[index].unsqueeze(0).to(self.device),
                     ge2es= ge2es[index].unsqueeze(0).to(self.device),
@@ -516,8 +516,8 @@ class Trainer:
             target_audio = target_audio.cpu().numpy()
             prediction_audio = prediction_audio.cpu().numpy()
 
-            target_log_f0 = log_f0s[index, :target_feature_length].cpu().numpy() 
-            prediction_log_f0 = log_f0_predictions[0, :prediction_feature_length].cpu().numpy()
+            target_f0 = f0s[index, :target_feature_length].cpu().numpy() 
+            prediction_f0 = f0_predictions[0, :prediction_feature_length].cpu().numpy()
 
             prediction_alignment = alignments[0, :prediction_feature_length, :token_length].cpu().numpy()
 
@@ -525,8 +525,8 @@ class Trainer:
                 'Feature/Target': (target_feature, None, 'auto', None, None, None),
                 'Feature/Prediction': (prediction_feature, None, 'auto', None, None, None),
                 'Duration/Prediction': (prediction_alignment.T, None, 'auto', None, None, None),
-                'F0/Target': (target_log_f0, None, 'auto', None, None, None),
-                'F0/Prediction': (prediction_log_f0, None, 'auto', None, None, None),
+                'F0/Target': (target_f0, None, 'auto', None, None, None),
+                'F0/Prediction': (prediction_f0, None, 'auto', None, None, None),
                 }
             audio_dict = {
                 'Audio/Target': (target_audio, self.hp.Sound.Sample_Rate),
@@ -550,8 +550,8 @@ class Trainer:
                         'Evaluation.Feature.Target': wandb.Image(target_feature),
                         'Evaluation.Feature.Prediction': wandb.Image(prediction_feature),
                         'Evaluation.F0': wandb.plot.line_series(
-                            xs= np.arange(target_log_f0.shape[0]),
-                            ys= [target_log_f0, prediction_log_f0],
+                            xs= np.arange(target_f0.shape[0]),
+                            ys= [target_f0, prediction_f0],
                             keys= ['Target', 'Prediction'],
                             title= 'F0',
                             xname= 'Feature_t'
@@ -583,7 +583,7 @@ class Trainer:
         token_lengths = token_lengths.to(self.device, non_blocking=True)
         ge2es = ge2es.to(self.device, non_blocking=True)
 
-        audio_predictions, *_, log_f0s, alignments = self.model_dict['HierSpeech'](
+        audio_predictions, *_, f0s, alignments = self.model_dict['HierSpeech'](
             tokens= tokens,
             token_lengths= token_lengths,
             ge2es= ge2es
@@ -606,7 +606,7 @@ class Trainer:
             fmax= None
             ).cpu().numpy()
         audio_predictions = audio_predictions.cpu().numpy()
-        log_f0s = log_f0s.cpu().numpy()
+        f0s = f0s.cpu().numpy()
         alignments = alignments.cpu().numpy()
 
         files = []
@@ -622,7 +622,7 @@ class Trainer:
             feature,
             audio,
             alignment,
-            log_f0,
+            f0,
             token_length,
             feature_length,
             audio_length,
@@ -634,7 +634,7 @@ class Trainer:
             feature_predictions,
             audio_predictions,
             alignments,
-            log_f0s,
+            f0s,
             token_lengths,
             feature_lengths,
             audio_lengths,
@@ -659,9 +659,9 @@ class Trainer:
                 )
             plt.colorbar(ax= ax)
             ax = plt.subplot2grid((4, 1), (3, 0), rowspan= 2)
-            plt.plot(log_f0[:feature_length])
+            plt.plot(f0[:feature_length])
             plt.margins(x= 0)
-            plt.title('Log F0    {}'.format(title))
+            plt.title('F0    {}'.format(title))
             plt.colorbar(ax= ax)
             plt.tight_layout()
             plt.savefig(os.path.join(self.hp.Inference_Path, 'Step-{}'.format(self.steps), 'PNG', '{}.png'.format(file)).replace('\\', '/'))
