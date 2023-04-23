@@ -5,6 +5,7 @@ from typing import Optional, List, Dict, Tuple, Union
 
 from transformers import Wav2Vec2ForCTC
 
+from .Relative_Multihead_Attentions import MultiHeadAttention
 from .Monotonic_Alignment_Search import Calc_Duration
 from .Stochastic_Duration_Predictor import Stochastic_Duration_Predictor
 from .Flow import FlowBlock, WaveNet
@@ -173,7 +174,8 @@ class HierSpeech(torch.nn.Module):
 
         audio_predictions_slice = self.decoder(
             encodings= acoustic_samples_slice,
-            lengths= torch.full_like(feature_lengths, self.hp.Train.Segment_Size)
+            lengths= torch.full_like(feature_lengths, self.hp.Train.Segment_Size),
+            conditions= conditions,
             )
 
         mel_predictions_slice = mel_spectrogram(
@@ -191,10 +193,49 @@ class HierSpeech(torch.nn.Module):
             encodings= linguistic_samples
             )
 
+
+        
+        
+        # forwad flow from natural speech
+        linguistic_samples_forward = self.linguistic_flow(
+            x= encoding_samples,
+            lengths= feature_lengths,
+            conditions= conditions,
+            reverse= True
+            )   # [Batch, Enc_d, Feature_t]        
+        acoustic_samples_forward = self.acoustic_flow(
+            x= linguistic_samples,
+            lengths= feature_lengths,
+            conditions= conditions,
+            reverse= True
+            )   # [Batch, Enc_d, Feature_t]
+        
+        acoustic_samples_forward_slice, offsets = self.segment(
+            patterns= (acoustic_samples_forward + f0_embeddings).permute(0, 2, 1),
+            segment_size= self.hp.Train.Segment_Size,
+            lengths= feature_lengths
+            )
+        acoustic_samples_forward_slice = acoustic_samples_forward_slice.permute(0, 2, 1)    # [Batch, Enc_d, Feature_st]
+
+        audios_forward_slice, _ = self.segment(
+            patterns= audios,
+            segment_size= self.hp.Train.Segment_Size * self.hp.Sound.Frame_Shift,
+            offsets= offsets * self.hp.Sound.Frame_Shift
+            )   # [Batch, Audio_st(Feature_st * Hop_Size)]
+
+        audio_predictions_forward_slice = self.decoder(
+            encodings= acoustic_samples_forward_slice,
+            lengths= torch.full_like(feature_lengths, self.hp.Train.Segment_Size),
+            conditions= conditions,
+            )
+
         return \
             audio_predictions_slice, audios_slice, mel_predictions_slice, mels_slice, \
+            audio_predictions_forward_slice, audios_forward_slice, \
             encoding_means, encoding_log_stds, linguistic_flows, linguistic_log_stds, \
+            linguistic_means, linguistic_log_stds, linguistic_samples_forward, encoding_log_stds, \
             linguistic_means, linguistic_log_stds, acoustic_flows, acoustic_log_stds, \
+            acoustic_means, acoustic_log_stds, acoustic_samples_forward, linguistic_log_stds, \
             duration_losses, token_predictions, f0_predictions, alignments
 
     def Inference(
@@ -243,11 +284,15 @@ class HierSpeech(torch.nn.Module):
 
         audio_predictions = self.decoder(
             encodings= acoustic_samples + f0_embeddings,
-            lengths= feature_lengths
+            lengths= feature_lengths,
+            conditions= conditions,
             )
 
         return \
             audio_predictions, None, None, None, \
+            None, None, \
+            None, None, None, None, \
+            None, None, None, None, \
             None, None, None, None, \
             None, None, None, None, \
             None, None, f0_predictions, alignments
@@ -560,6 +605,13 @@ class Decoder(torch.nn.Module):
         super().__init__()
         self.hp = hyper_parameters
 
+        self.condition = Conv1d(
+            in_channels= self.hp.Encoder.Size,
+            out_channels= self.hp.Encoder.Size,
+            kernel_size= 1,
+            )
+        self.vae_memory_bank = VAE_Memory_Bank(self.hp)
+
         self.prenet = Conv1d(
             in_channels= self.hp.Encoder.Size,
             out_channels= self.hp.Decoder.Upsample.Base_Size,
@@ -628,10 +680,14 @@ class Decoder(torch.nn.Module):
         self,
         encodings: torch.Tensor,
         lengths: torch.Tensor,
+        conditions: torch.Tensor,
         ) -> torch.Tensor:
         masks = (~Mask_Generate(lengths= lengths, max_length= torch.ones_like(encodings[0, 0]).sum())).unsqueeze(1).float()
+        if conditions.ndim == 2:
+            conditions = conditions.unsqueeze(2)
 
-        decodings = self.prenet(encodings) * masks
+        decodings = self.vae_memory_bank(encodings + self.condition(conditions)) * masks
+        decodings = self.prenet(decodings) * masks
         for upsample_block, residual_blocks, upsample_rate in zip(
             self.upsample_blocks,
             self.residual_blocks,
@@ -695,6 +751,28 @@ class Decoder_Residual_Block(torch.nn.Module):
         
         return x * masks
 
+class VAE_Memory_Bank(torch.nn.Module):
+    def __init__(
+        self,
+        hyper_parameters: Namespace
+        ):
+        super().__init__()
+        self.hp = hyper_parameters
+
+        self.attention = MultiHeadAttention(
+            channels= self.hp.Encoder.Size,
+            out_channels= self.hp.Encoder.Size,
+            n_heads=self.hp.Decoder.VAE_Memory.Head,
+            )        
+        self.bank = torch.nn.Parameter(
+            torch.randn(self.hp.Encoder.Size, self.hp.Decoder.VAE_Memory.Num_Bank)
+            )
+    
+    def forward(self, encodings: torch.Tensor):
+        return self.attention(
+            x= encodings,
+            c= self.bank.unsqueeze(0).expand(encodings.size(0), -1, -1),
+            )
 
 class Feature_Encoder(torch.nn.Module): 
     def __init__(

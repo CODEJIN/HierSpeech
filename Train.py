@@ -224,8 +224,11 @@ class Trainer:
 
         with torch.cuda.amp.autocast(enabled= self.hp.Use_Mixed_Precision):
             audio_predictions_slice, audios_slice, mel_predictions_slice, mels_slice, \
+            audio_predictions_forward_slice, audios_forward_slice, \
             encoding_means, encoding_log_stds, linguistic_flows, linguistic_log_stds, \
+            linguistic_means, linguistic_log_stds, linguistic_samples_forward, encoding_log_stds, \
             linguistic_means, linguistic_log_stds, acoustic_flows, acoustic_log_stds, \
+            acoustic_means, acoustic_log_stds, acoustic_samples_forward, linguistic_log_stds, \
             duration_losses, token_predictions, f0_predictions, _ = self.model_dict['HierSpeech'](
                 tokens= tokens,
                 token_lengths= token_lengths,
@@ -237,15 +240,24 @@ class Trainer:
                 )
             
             audios_slice.requires_grad_()
+            audios_forward_slice.requires_grad_()
             discriminations_list_for_real, _ = self.model_dict['Discriminator'](audios_slice,)
             discriminations_list_for_fake, _ = self.model_dict['Discriminator'](audio_predictions_slice.detach())
+            discriminations_forward_list_for_real, _ = self.model_dict['Discriminator'](audios_forward_slice,)
+            discriminations_forward_list_for_fake, _ = self.model_dict['Discriminator'](audio_predictions_forward_slice.detach())
             with torch.cuda.amp.autocast(enabled= False):
                 loss_dict['Discrimination'] = Discriminator_Loss(discriminations_list_for_real, discriminations_list_for_fake)
+                loss_dict['Discrimination_Forwad'] = Discriminator_Loss(discriminations_forward_list_for_real, discriminations_forward_list_for_fake)
                 loss_dict['R1'] = self.criterion_dict['R1'](discriminations_list_for_real, audios_slice)
+                loss_dict['R1_Forward'] = self.criterion_dict['R1'](discriminations_forward_list_for_real, audios_forward_slice)
 
         self.optimizer_dict['Discriminator'].zero_grad()
-
-        self.scaler.scale(loss_dict['Discrimination'] + loss_dict['R1']).backward()
+        self.scaler.scale(
+            loss_dict['Discrimination'] +
+            loss_dict['Discrimination_Forwad'] * self.hp.Train.Learning_Rate.Lambda.GAN_Forward +
+            loss_dict['R1'] +
+            loss_dict['R1_Forward']
+            ).backward()
         self.scaler.unscale_(self.optimizer_dict['Discriminator'])
         if self.hp.Train.Gradient_Norm > 0.0:
             torch.nn.utils.clip_grad_norm_(
@@ -258,7 +270,8 @@ class Trainer:
 
         with torch.cuda.amp.autocast(enabled= self.hp.Use_Mixed_Precision):
             discriminations_list_for_real, feature_maps_list_for_real = self.model_dict['Discriminator'](audios_slice,)
-            discriminations_list_for_fake, feature_maps_list_for_fake = self.model_dict['Discriminator'](audio_predictions_slice)
+            discriminations_list_for_fake, feature_maps_list_for_fake = self.model_dict['Discriminator'](audio_predictions_slice)            
+            discriminations_forward_list_for_fake, _ = self.model_dict['Discriminator'](audio_predictions_forward_slice)
             with torch.cuda.amp.autocast(enabled= False):
                 feature_masks = Mask_Generate(
                     lengths= feature_lengths,
@@ -287,6 +300,13 @@ class Trainer:
                     flow_log_stds= linguistic_log_stds,
                     masks= ~feature_masks.unsqueeze(1)
                     )
+                loss_dict['Encoding_KLD_Forward'] = Flow_KL_Loss(
+                    encoding_means= linguistic_means,
+                    encoding_log_stds= linguistic_log_stds,
+                    flows= linguistic_samples_forward,
+                    flow_log_stds= encoding_log_stds,
+                    masks= ~feature_masks.unsqueeze(1)
+                    )
                 loss_dict['Linguistic_KLD'] = Flow_KL_Loss(
                     encoding_means= linguistic_means,
                     encoding_log_stds= linguistic_log_stds,
@@ -294,7 +314,16 @@ class Trainer:
                     flow_log_stds= acoustic_log_stds,
                     masks= ~feature_masks.unsqueeze(1)
                     )
+                loss_dict['Linguistic_KLD_Forward'] = Flow_KL_Loss(
+                    encoding_means= acoustic_means,
+                    encoding_log_stds= acoustic_log_stds,
+                    flows= acoustic_samples_forward,
+                    flow_log_stds= linguistic_log_stds,
+                    masks= ~feature_masks.unsqueeze(1)
+                    )
+
                 loss_dict['Adversarial'] = Generator_Loss(discriminations_list_for_fake)
+                loss_dict['Adversarial_Forward'] = Generator_Loss(discriminations_forward_list_for_fake)
                 loss_dict['Feature_Map'] = Feature_Map_Loss(feature_maps_list_for_real, feature_maps_list_for_fake)
 
         self.optimizer_dict['HierSpeech'].zero_grad()
@@ -304,8 +333,11 @@ class Trainer:
             loss_dict['Duration'] +
             loss_dict['TokenCTC'] * self.hp.Train.Learning_Rate.Lambda.Token_CTC +
             loss_dict['Encoding_KLD'] +
+            loss_dict['Encoding_KLD_Forward'] * self.hp.Train.Learning_Rate.Lambda.KLD_Forward +
             loss_dict['Linguistic_KLD'] +
+            loss_dict['Linguistic_KLD_Forward'] * self.hp.Train.Learning_Rate.Lambda.KLD_Forward +
             loss_dict['Adversarial'] +
+            loss_dict['Adversarial_Forward'] * self.hp.Train.Learning_Rate.Lambda.GAN_Forward +
             loss_dict['Feature_Map'] * self.hp.Train.Learning_Rate.Lambda.Feature_Map
             ).backward()
 
@@ -384,8 +416,11 @@ class Trainer:
 
         with torch.cuda.amp.autocast(enabled= self.hp.Use_Mixed_Precision):
             audio_predictions_slice, audios_slice, mel_predictions_slice, mels_slice, \
+            audio_predictions_forward_slice, audios_forward_slice, \
             encoding_means, encoding_log_stds, linguistic_flows, linguistic_log_stds, \
+            linguistic_means, linguistic_log_stds, linguistic_samples_forward, encoding_log_stds, \
             linguistic_means, linguistic_log_stds, acoustic_flows, acoustic_log_stds, \
+            acoustic_means, acoustic_log_stds, acoustic_samples_forward, linguistic_log_stds, \
             duration_losses, token_predictions, f0_predictions, _ = self.model_dict['HierSpeech'](
                 tokens= tokens,
                 token_lengths= token_lengths,
@@ -397,8 +432,11 @@ class Trainer:
                 )
 
             audios_slice.requires_grad_() # to calculate gradient penalty.
+            audios_forward_slice.requires_grad_()
             discriminations_list_for_real, feature_maps_list_for_real = self.model_dict['Discriminator'](audios_slice)
             discriminations_list_for_fake, feature_maps_list_for_fake = self.model_dict['Discriminator'](audio_predictions_slice)
+            discriminations_forward_list_for_real, _ = self.model_dict['Discriminator'](audios_forward_slice,)
+            discriminations_forward_list_for_fake, _ = self.model_dict['Discriminator'](audio_predictions_forward_slice.detach())
             with torch.cuda.amp.autocast(enabled= False):
                 feature_masks = Mask_Generate(
                     lengths= feature_lengths,
@@ -427,6 +465,13 @@ class Trainer:
                     flow_log_stds= linguistic_log_stds,
                     masks= ~feature_masks.unsqueeze(1)
                     )
+                loss_dict['Encoding_KLD_Forward'] = Flow_KL_Loss(
+                    encoding_means= linguistic_means,
+                    encoding_log_stds= linguistic_log_stds,
+                    flows= linguistic_samples_forward,
+                    flow_log_stds= encoding_log_stds,
+                    masks= ~feature_masks.unsqueeze(1)
+                    )
                 loss_dict['Linguistic_KLD'] = Flow_KL_Loss(
                     encoding_means= linguistic_means,
                     encoding_log_stds= linguistic_log_stds,
@@ -434,9 +479,20 @@ class Trainer:
                     flow_log_stds= acoustic_log_stds,
                     masks= ~feature_masks.unsqueeze(1)
                     )
+                loss_dict['Linguistic_KLD_Forward'] = Flow_KL_Loss(
+                    encoding_means= acoustic_means,
+                    encoding_log_stds= acoustic_log_stds,
+                    flows= acoustic_samples_forward,
+                    flow_log_stds= linguistic_log_stds,
+                    masks= ~feature_masks.unsqueeze(1)
+                    )
+                
                 loss_dict['Discrimination'] = Discriminator_Loss(discriminations_list_for_real, discriminations_list_for_fake)
+                loss_dict['Discrimination_Forwad'] = Discriminator_Loss(discriminations_forward_list_for_real, discriminations_forward_list_for_fake)
                 loss_dict['R1'] = self.criterion_dict['R1'](discriminations_list_for_real, audios_slice)
+                loss_dict['R1_Forward'] = self.criterion_dict['R1'](discriminations_forward_list_for_real, audios_forward_slice)
                 loss_dict['Adversarial'] = Generator_Loss(discriminations_list_for_fake)
+                loss_dict['Adversarial_Forward'] = Generator_Loss(discriminations_forward_list_for_fake)
                 loss_dict['Feature_Map'] = Feature_Map_Loss(feature_maps_list_for_real, feature_maps_list_for_fake)
 
         for tag, loss in loss_dict.items():

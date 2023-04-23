@@ -65,6 +65,9 @@ Linguistic_Flow:
     Dropout_Rate: 0.1
 
 Decoder:
+    VAE_Memory:
+        Head: 2
+        Num_Bank: 1000
     Prenet:
         Kernel_Size: 7
     Upsample:
@@ -124,8 +127,10 @@ Train:
         Initial: 2.0e-4
         Decay: 0.999875
         Lambda:
+            GAN_Forward: 0.1
             STFT: 45.0
             F0: 45.0
+            KLD_Forward: 0.001
             Token_CTC: 45.0
             Feature_Map: 2.0
     ADAM:
