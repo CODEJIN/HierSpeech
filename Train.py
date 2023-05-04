@@ -810,7 +810,10 @@ class Trainer:
 
     def _Set_Distribution(self):
         if self.num_gpus > 1:
-            self.model = apply_gradient_allreduce(self.model)
+            self.model_dict = {
+                key: apply_gradient_allreduce(model)
+                for key, model in self.model_dict.items()
+                }
 
     def Train(self):
         hp_path = os.path.join(self.hp.Checkpoint_Path, 'Hyper_Parameters.yaml').replace('\\', '/')
@@ -845,7 +848,7 @@ if __name__ == '__main__':
     argParser = argparse.ArgumentParser()
     argParser.add_argument('-hp', '--hyper_parameters', required= True, type= str)
     argParser.add_argument('-s', '--steps', default= 0, type= int)
-    argParser.add_argument('-r', '--local_rank', default= 0, type= int)
+    argParser.add_argument('-r', '--local-rank', default= 0, type= int)
     args = argParser.parse_args()
     
     hp = Recursive_Parse(yaml.load(
