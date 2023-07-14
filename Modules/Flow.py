@@ -50,7 +50,7 @@ class FlowBlock(torch.nn.Module):
         reverse: a boolean
         '''
         masks= (~Mask_Generate(lengths, max_length= x.size(2))).unsqueeze(1).float()
-        if not conditions is None:
+        if not conditions is None and conditions.ndim == 2:
             conditions = conditions.unsqueeze(2)    # [Batch, Cond_d, 1]
         
         for flow in (self.flows if not reverse else reversed(self.flows)):

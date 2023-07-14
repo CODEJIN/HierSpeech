@@ -10,15 +10,12 @@ from typing import List, Tuple, Dict, Union, Optional
 from phonemizer import phonemize
 from unidecode import unidecode
 
-from meldataset import mel_spectrogram, spectrogram
+from meldataset import spectrogram
 
 from Arg_Parser import Recursive_Parse
 
 using_Extension = [x.upper() for x in ['.wav', '.m4a', '.flac']]
 regex_checker = re.compile('[가-힣A-Za-z,.?!\'\-\s]+')
-
-if __name__ == '__main__':
-    ge2e_generator = torch.jit.load('ge2e.pts')
 
 def Text_Filtering(text: str):
     remove_letter_list = ['(', ')', '\"', '[', ']', ':', ';']
@@ -94,7 +91,6 @@ def Phonemize(texts: Union[str, List[str]], language: str):
 def Pattern_Generate(
     path,
     n_fft: int,
-    num_mels: int,
     sample_rate: int,
     hop_size: int,
     win_size: int,
@@ -113,17 +109,6 @@ def Pattern_Generate(
         center= center,
         use_normalize= False
         ).squeeze(0).numpy()
-    mel = mel_spectrogram(
-        y= torch.from_numpy(audio).float().unsqueeze(0),
-        n_fft= n_fft,
-        num_mels= num_mels,
-        sampling_rate= sample_rate,
-        hop_size= hop_size,
-        win_size= win_size,
-        fmin= 0,
-        fmax= None,
-        center= center
-        ).squeeze(0).numpy()
     f0 = rapt(
         x= audio * 32768,
         fs= sample_rate,
@@ -132,31 +117,26 @@ def Pattern_Generate(
         max= f0_max,
         otype= 1
         )
-    energy = np.linalg.norm(mel, ord= 2, axis= 0)
 
-    if abs(mel.shape[1] - f0.shape[0]) > 1:
-        return None, None, None, None, None
-    elif mel.shape[1] > f0.shape[0]:
-        f0 = np.pad(f0, [0, mel.shape[1] - f0.shape[0]], constant_values= 0.0)
-    else:   # mel.shape[1] < f0.shape[0]:
-        audio = np.pad(audio, [0, (f0.shape[0] - mel.shape[1]) * hop_size])
-        spect = np.pad(spect, [[0, 0], [0, f0.shape[0] - mel.shape[1]]], mode= 'edge')
-        mel = np.pad(mel, [[0, 0], [0, f0.shape[0] - mel.shape[1]]], mode= 'edge')
-        energy = np.linalg.norm(mel, ord= 2, axis= 0)   # The padding does not work to the energy, re-calculate.
+    if abs(spect.shape[1] - f0.shape[0]) > 1:
+        return None, None, None
+    elif spect.shape[1] > f0.shape[0]:
+        f0 = np.pad(f0, [0, spect.shape[1] - f0.shape[0]], constant_values= 0.0)
+    else:   # spect.shape[1] < f0.shape[0]:
+        audio = np.pad(audio, [0, (f0.shape[0] - spect.shape[1]) * hop_size])
+        spect = np.pad(spect, [[0, 0], [0, f0.shape[0] - spect.shape[1]]], mode= 'edge')
     
     nonsilence_frames = np.where(f0 > 0.0)[0]
     if len(nonsilence_frames) < 2:
-        return None, None, None, None, None
+        return None, None, None
     initial_silence_frame, *_, last_silence_frame = nonsilence_frames
     initial_silence_frame = max(initial_silence_frame - 21, 0)
     last_silence_frame = min(last_silence_frame + 21, f0.shape[0])
     audio = audio[initial_silence_frame * hop_size:last_silence_frame * hop_size]
     spect = spect[:, initial_silence_frame:last_silence_frame]
-    mel = mel[:, initial_silence_frame:last_silence_frame]
     f0 = f0[initial_silence_frame:last_silence_frame]
-    energy = energy[initial_silence_frame:last_silence_frame]
 
-    return audio, spect, mel, f0, energy
+    return audio.astype(np.float16), spect.astype(np.float16), f0.astype(np.float16)
 
 def Pattern_File_Generate(path: str, speaker: str, emotion: str, language: str, gender: str, dataset: str, text: str, pronunciation: str, tag: str='', eval: bool= False):
     pattern_path = hp.Train.Eval_Pattern.Path if eval else hp.Train.Train_Pattern.Path
@@ -173,10 +153,9 @@ def Pattern_File_Generate(path: str, speaker: str, emotion: str, language: str, 
         return
     file = os.path.join(pattern_path, dataset, speaker, file).replace("\\", "/")
 
-    audio, spect, mel, f0, energy = Pattern_Generate(
+    audio, spect, f0 = Pattern_Generate(
         path= path,
         n_fft= hp.Sound.N_FFT,
-        num_mels= hp.Sound.Mel_Dim,
         sample_rate= hp.Sound.Sample_Rate,
         hop_size= hp.Sound.Frame_Shift,
         win_size= hp.Sound.Frame_Length,
@@ -185,22 +164,11 @@ def Pattern_File_Generate(path: str, speaker: str, emotion: str, language: str, 
         )
     if audio is None:
         return
-    
-    with torch.inference_mode():
-        mel_for_ge2e = mel
-        if mel_for_ge2e.shape[1] < 240:
-            mel_for_ge2e = np.hstack([mel_for_ge2e] * math.ceil(240 / mel_for_ge2e.shape[0]))
-        offset = np.random.randint(0, max(mel_for_ge2e.shape[1] - 240, 1))
-        mel_for_ge2e = mel_for_ge2e[:, offset:offset + 240]
-        ge2e = ge2e_generator(torch.FloatTensor(mel_for_ge2e).unsqueeze(0)).cpu().squeeze(0)
- 
-    new_Pattern_dict = {
-        'Audio': audio.astype(np.float32),
-        'Spectrogram': spect.astype(np.float32),
-        'Mel': mel.astype(np.float32),
-        'F0': f0.astype(np.float32),
-        'Energy': energy.astype(np.float32),
-        'GE2E': ge2e,
+
+    new_pattern_dict = {
+        'Audio': audio,
+        'Spectrogram': spect,
+        'F0': f0,
         'Speaker': speaker,
         'Emotion': emotion,
         'Language': language,
@@ -212,7 +180,7 @@ def Pattern_File_Generate(path: str, speaker: str, emotion: str, language: str, 
 
     os.makedirs(os.path.join(pattern_path, dataset, speaker).replace('\\', '/'), exist_ok= True)
     with open(file, 'wb') as f:
-        pickle.dump(new_Pattern_dict, f, protocol=4)
+        pickle.dump(new_pattern_dict, f, protocol=4)
 
 def Selvas_Info_Load(path: str):
     '''
@@ -327,7 +295,7 @@ def Selvas_Info_Load(path: str):
         for path, speaker in speaker_dict.items()
         }
 
-    print('Emotion info generated: {}'.format(len(paths)))
+    print('Selvas info generated: {}'.format(len(paths)))
     return paths, text_dict, pronunciation_dict, speaker_dict, emotion_dict, language_dict, gender_dict
 
 def KSS_Info_Load(path: str):
@@ -509,7 +477,7 @@ def VCTK_Info_Load(path: str):
     '''
     VCTK v0.92 is distributed as flac files.
     '''
-    path = os.path.join(path, 'wav48_silence_trimmed').replace('\\', '/')
+    path = os.path.join(path, 'wav48').replace('\\', '/')
     
     paths = []
     for root, _, files in os.walk(path):
@@ -526,7 +494,7 @@ def VCTK_Info_Load(path: str):
     for path in paths:
         if 'p315'.upper() in path.upper():  #Officially, 'p315' text is lost in VCTK dataset.
             continue
-        text = Text_Filtering(unidecode(open(path.replace('wav48_silence_trimmed', 'txt').replace('flac', 'txt').replace('_mic2', ''), 'r').readlines()[0]))
+        text = Text_Filtering(unidecode(open(path.replace('wav48', 'txt').replace('flac', 'txt').replace('_mic2', ''), 'r').readlines()[0]))
         if text is None:
             continue
         
@@ -760,11 +728,8 @@ def Metadata_Generate(eval: bool= False):
     pattern_path = hp.Train.Eval_Pattern.Path if eval else hp.Train.Train_Pattern.Path
     metadata_File = hp.Train.Eval_Pattern.Metadata_File if eval else hp.Train.Train_Pattern.Metadata_File
 
-    spectrogram_range_dict = {}
-    mel_range_dict = {}
+    spectrogram_dict = {}
     f0_dict = {}
-    energy_dict = {}
-    ge2e_dict = {}
     speakers = []
     emotions = []
     languages = []
@@ -780,9 +745,7 @@ def Metadata_Generate(eval: bool= False):
         'File_List': [],
         'Audio_Length_Dict': {},
         'Spectrogram_Length_Dict': {},
-        'Mel_Length_Dict': {},
         'F0_Length_Dict': {},
-        'Energy_Length_Dict': {},
         'Speaker_Dict': {},
         'Emotion_Dict': {},
         'Dataset_Dict': {},
@@ -805,14 +768,12 @@ def Metadata_Generate(eval: bool= False):
             try:
                 if not all([
                     key in pattern_dict.keys()
-                    for key in ('Audio', 'Spectrogram', 'Mel', 'F0', 'Energy', 'GE2E', 'Speaker', 'Emotion', 'Language', 'Gender', 'Dataset', 'Text', 'Pronunciation')
+                    for key in ('Audio', 'Spectrogram', 'F0', 'Speaker', 'Emotion', 'Language', 'Gender', 'Dataset', 'Text', 'Pronunciation')
                     ]):
                     continue
                 new_metadata_dict['Audio_Length_Dict'][file] = pattern_dict['Audio'].shape[0]
-                new_metadata_dict['Spectrogram_Length_Dict'][file] = pattern_dict['Spectrogram'].shape[0]
-                new_metadata_dict['Mel_Length_Dict'][file] = pattern_dict['Mel'].shape[0]
+                new_metadata_dict['Spectrogram_Length_Dict'][file] = pattern_dict['Spectrogram'].shape[1]
                 new_metadata_dict['F0_Length_Dict'][file] = pattern_dict['F0'].shape[0]
-                new_metadata_dict['Energy_Length_Dict'][file] = pattern_dict['Energy'].shape[0]
                 new_metadata_dict['Speaker_Dict'][file] = pattern_dict['Speaker']
                 new_metadata_dict['Emotion_Dict'][file] = pattern_dict['Emotion']
                 new_metadata_dict['Dataset_Dict'][file] = pattern_dict['Dataset']
@@ -822,25 +783,15 @@ def Metadata_Generate(eval: bool= False):
                 new_metadata_dict['File_List_by_Speaker_Dict'][pattern_dict['Speaker']].append(file)
                 new_metadata_dict['Text_Length_Dict'][file] = len(pattern_dict['Text'])
 
-                if not pattern_dict['Speaker'] in spectrogram_range_dict.keys():
-                    spectrogram_range_dict[pattern_dict['Speaker']] = {'Min': math.inf, 'Max': -math.inf}
-                if not pattern_dict['Speaker'] in mel_range_dict.keys():
-                    mel_range_dict[pattern_dict['Speaker']] = {'Min': math.inf, 'Max': -math.inf}
+                if not pattern_dict['Speaker'] in spectrogram_dict.keys():
+                    spectrogram_dict[pattern_dict['Speaker']] = {'Min': math.inf, 'Max': -math.inf}
                 if not pattern_dict['Speaker'] in f0_dict.keys():
                     f0_dict[pattern_dict['Speaker']] = []
-                if not pattern_dict['Speaker'] in energy_dict.keys():
-                    energy_dict[pattern_dict['Speaker']] = []
-                if not pattern_dict['Speaker'] in ge2e_dict.keys():
-                    ge2e_dict[pattern_dict['Speaker']] = []
 
-                spectrogram_range_dict[pattern_dict['Speaker']]['Min'] = min(spectrogram_range_dict[pattern_dict['Speaker']]['Min'], pattern_dict['Spectrogram'].min().item())
-                spectrogram_range_dict[pattern_dict['Speaker']]['Max'] = max(spectrogram_range_dict[pattern_dict['Speaker']]['Max'], pattern_dict['Spectrogram'].max().item())
-                mel_range_dict[pattern_dict['Speaker']]['Min'] = min(mel_range_dict[pattern_dict['Speaker']]['Min'], pattern_dict['Mel'].min().item())
-                mel_range_dict[pattern_dict['Speaker']]['Max'] = max(mel_range_dict[pattern_dict['Speaker']]['Max'], pattern_dict['Mel'].max().item())
+                spectrogram_dict[pattern_dict['Speaker']]['Min'] = min(spectrogram_dict[pattern_dict['Speaker']]['Min'], pattern_dict['Spectrogram'].min().item())
+                spectrogram_dict[pattern_dict['Speaker']]['Max'] = max(spectrogram_dict[pattern_dict['Speaker']]['Max'], pattern_dict['Spectrogram'].max().item())
 
                 f0_dict[pattern_dict['Speaker']].append(pattern_dict['F0'])
-                energy_dict[pattern_dict['Speaker']].append(pattern_dict['Energy'])
-                ge2e_dict[pattern_dict['Speaker']].append(pattern_dict['GE2E'])
                 speakers.append(pattern_dict['Speaker'])
                 emotions.append(pattern_dict['Emotion'])                
                 languages.append(pattern_dict['Language'])
@@ -859,46 +810,25 @@ def Metadata_Generate(eval: bool= False):
 
     if not eval:
         yaml.dump(
-            spectrogram_range_dict,
-            open(hp.Spectrogram_Range_Info_Path, 'w')
-            )
-        yaml.dump(
-            mel_range_dict,
-            open(hp.Mel_Range_Info_Path, 'w')
+            spectrogram_dict,
+            open(hp.Spectrogram_Info_Path, 'w')
             )
 
         f0_info_dict = {}
         for speaker, f0_list in f0_dict.items():
             f0 = np.hstack(f0_list)
             f0 = np.clip(f0, 0, np.inf)
-            f0 = f0[f0 != 0.0]
 
             f0_info_dict[speaker] = {
                 'Mean': f0.mean().item(),
-                'Std': f0.std().item()
+                'Std': f0.std().item(),
+                'Min': f0.min().item(),
+                'Max': f0.max().item()
                 }
         yaml.dump(
             f0_info_dict,
             open(hp.F0_Info_Path, 'w')
             )
-
-        energy_info_dict = {}
-        for speaker, energy_list in energy_dict.items():
-            energy = np.hstack(energy_list)
-            energy_info_dict[speaker] = {
-                'Mean': energy.mean().item(),
-                'Std': energy.std().item()
-                }
-        yaml.dump(
-            energy_info_dict,
-            open(hp.Energy_Info_Path, 'w')
-            )
-
-        ge2e_dict = {
-            speaker: np.stack(ge2e_list, axis= 0).mean(axis= 0)
-            for speaker, ge2e_list in ge2e_dict.items()
-            }
-        pickle.dump(ge2e_dict, open(hp.GE2E_Path, 'wb'), protocol= 4)
 
         speaker_index_dict = {
             speaker: index
@@ -1073,8 +1003,8 @@ if __name__ == '__main__':
         dataset_dict.update({path: 'LJ' for paths in lj_paths for path in paths})
         tag_dict.update({path: '' for paths in lj_paths for path in paths})
 
-    # if len(train_paths) == 0 or len(eval_paths) == 0:
-    #     raise ValueError('Total info count must be bigger than 0.')
+    train_paths = sorted(train_paths)
+    eval_paths = sorted(eval_paths)
 
     tokens = set([
         token
@@ -1132,4 +1062,4 @@ if __name__ == '__main__':
     Metadata_Generate()
     Metadata_Generate(eval= True)
 
-# python Pattern_Generator.py -hp Hyper_Parameters.yaml -vctk D:\Datasets\VCTK092
+# python Pattern_Generator.py -hp Hyper_Parameters.yaml -vctk D:\Rawdata\VCTK092

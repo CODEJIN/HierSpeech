@@ -7,8 +7,8 @@ Sound:
     F0_Min: 65
     F0_Max: 2094
 
-Tokens: 55
-GE2E_Size: 256
+Tokens: 63
+Speakers: 157
 
 Encoder:
     Size: 192
@@ -26,12 +26,6 @@ Duration_Predictor:
     Flow_Stack: 4
     Dropout_Rate: 0.5
 
-F0_Predictor:
-    Stack: 6
-    Kernel_Size: 17
-    LeakyRelu_Negative_Slope: 0.1
-    Dropout_Rate: 0.3
-
 Acoustic_Encoder:
     Conv_Stack: 16
     Kernel_Size: 5
@@ -45,12 +39,6 @@ Acoustic_Flow:
     Dilation_Rate: 1
     Dropout_Rate: 0.1
 
-Token_Predictor:
-    Size: 256
-    LSTM:
-        Stack: 2
-        Dropout_Rate: 0.1
-    
 Linguistic_Encoder:
     Conv_Stack: 16
     Kernel_Size: 5
@@ -63,6 +51,12 @@ Linguistic_Flow:
     Kernel_Szie: 5
     Dilation_Rate: 1
     Dropout_Rate: 0.1
+
+Token_Predictor:
+    Size: 256
+    LSTM:
+        Stack: 2
+        Dropout_Rate: 0.1
 
 Decoder:
     Prenet:
@@ -84,45 +78,45 @@ Discriminator:
     STFT_N_FFT: [1024, 2048, 512, 300, 1200]
     Scale_Pool_Kernel_Size: [1, 4, 8, 16, 32]
 
-Token_Path: 'D:/Datasets/22K.LJ/Token.yaml'
-GE2E_Path: 'D:/Datasets/22K.LJ/GE2E.pickle'
-Spectrogram_Range_Info_Path: 'D:/Datasets/22K.LJ/Spectrogram_Range_Info.yaml'
-Mel_Range_Info_Path: 'D:/Datasets/22K.LJ/Mel_Range_Info.yaml'
-F0_Info_Path: 'D:/Datasets/22K.LJ/F0_Info.yaml'
-Energy_Info_Path: 'D:/Datasets/22K.LJ/Energy_Info.yaml'
-Speaker_Info_Path: 'D:/Datasets/22K.LJ/Speaker_Info.yaml'
-Emotion_Info_Path: 'D:/Datasets/22K.LJ/Emotion_Info.yaml'
-Language_Info_Path: 'D:/Datasets/22K.LJ/Language_Info.yaml'
-Gender_Info_Path: 'D:/Datasets/22K.LJ/Gender_Info.yaml'
-Language_and_Gender_Info_by_Speaker_Path: 'D:/Datasets/22K.LJ/Language_and_Gender_Info_by_Speaker.yaml'
+Token_Path: 'F:/Datasets/22K.VITS.VCTK/Token.yaml'
+GE2E_Path: 'F:/Datasets/22K.VITS.VCTK/GE2E.pickle'
+Spectrogram_Info_Path: 'F:/Datasets/22K.VITS.VCTK/Spectrogram_Range_Info.yaml'
+Mel_Range_Info_Path: 'F:/Datasets/22K.VITS.VCTK/Mel_Range_Info.yaml'
+F0_Info_Path: 'F:/Datasets/22K.VITS.VCTK/F0_Info.yaml'
+Energy_Info_Path: 'F:/Datasets/22K.VITS.VCTK/Energy_Info.yaml'
+Speaker_Info_Path: 'F:/Datasets/22K.VITS.VCTK/Speaker_Info.yaml'
+Emotion_Info_Path: 'F:/Datasets/22K.VITS.VCTK/Emotion_Info.yaml'
+Language_Info_Path: 'F:/Datasets/22K.VITS.VCTK/Language_Info.yaml'
+Gender_Info_Path: 'F:/Datasets/22K.VITS.VCTK/Gender_Info.yaml'
+Language_and_Gender_Info_by_Speaker_Path: 'F:/Datasets/22K.VITS.VCTK/Language_and_Gender_Info_by_Speaker.yaml'
 Train:
     Pattern_Cache: false
     Train_Pattern:
-        Path: 'D:/Datasets/22K.LJ/Train'
+        Path: 'F:/Datasets/22K.VITS.VCTK/Train'
         Metadata_File: 'METADATA.PICKLE'
         Feature_Length:
             Min: 50
-            Max: 1200
+            Max: 800
         Text_Length:
             Min: 1
             Max: 200
         Accumulated_Dataset_Epoch: 1 # This is to prevent slow down from torch.utils.data.DataLoader when the number of patterns is small.
         Augmentation_Ratio: 0.10
     Eval_Pattern:
-        Path: 'D:/Datasets/22K.LJ/Eval'
+        Path: 'F:/Datasets/22K.VITS.VCTK/Eval'
         Metadata_File: 'METADATA.PICKLE'
         Feature_Length:
             Min: 50
-            Max: 1200
+            Max: 800
         Text_Length:
             Min: 10
             Max: 200
     Num_Workers: 0
     Batch_Size: 16
-    Segment_Size: 32
+    Segment_Size: 64
     Learning_Rate:
         Initial: 2.0e-4
-        Decay: 0.999875
+        Warmup_Step: 4000
         Lambda:
             STFT: 45.0
             Token_CTC: 45.0
@@ -142,8 +136,14 @@ Train:
         Text: [
             'Do not kill the goose that lays the golden eggs.',
             'A good medicine tastes bitter.',
-            'Do not count your chickens before they hatch.',
-            'If you laugh, blessings will come your way.'
+            ]
+        Speaker: [
+            'VCTK.P250',
+            'VCTK.P251',
+            ]
+        Language: [
+            'English',
+            'English',
             ]
 
 Inference_Batch_Size: 16
@@ -155,9 +155,9 @@ Log_Path: './results/Log'
 Weights_and_Biases:
     # Use: true
     Use: false
-    Project: 'HierSpeech'
+    Project: 'VITS'
     Entity: 'codejin'
-    Name: 'LJ'
+    Name: 'VCTK'
     Save_Checkpoint:
         Use: false
         Interval: 50000 # Unlike local, The capacity of WandB is small.

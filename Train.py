@@ -4,6 +4,7 @@ os.environ['FOR_DISABLE_CONSOLE_CTRL_HANDLER'] = 'T'    # This is ot prevent to 
 import torch
 import numpy as np
 import logging, yaml, os, sys, argparse, math, pickle, wandb
+from functools import partial
 from tqdm import tqdm
 from collections import defaultdict
 import matplotlib
@@ -16,6 +17,7 @@ from Modules.Discriminator import Discriminator, R1_Regulator, Feature_Map_Loss,
 from Modules.Flow import Flow_KL_Loss
 
 from Datasets import Dataset, Inference_Dataset, Collater, Inference_Collater
+from Noam_Scheduler import Noam_Scheduler
 from Logger import Logger
 
 from meldataset import mel_spectrogram
@@ -84,9 +86,11 @@ class Trainer:
 
     def Dataset_Generate(self):
         token_dict = yaml.load(open(self.hp.Token_Path, 'r', encoding= 'utf-8-sig'), Loader=yaml.Loader)
-
+        speaker_dict = yaml.load(open(self.hp.Speaker_Info_Path, 'r', encoding= 'utf-8-sig'), Loader=yaml.Loader)
+        
         train_dataset = Dataset(
             token_dict= token_dict,
+            speaker_dict= speaker_dict,
             pattern_path= self.hp.Train.Train_Pattern.Path,
             metadata_file= self.hp.Train.Train_Pattern.Metadata_File,
             feature_length_min= max(self.hp.Train.Train_Pattern.Feature_Length.Min, self.hp.Train.Segment_Size),
@@ -99,6 +103,7 @@ class Trainer:
             )
         eval_dataset = Dataset(
             token_dict= token_dict,
+            speaker_dict= speaker_dict,
             pattern_path= self.hp.Train.Eval_Pattern.Path,
             metadata_file= self.hp.Train.Eval_Pattern.Metadata_File,
             feature_length_min= max(self.hp.Train.Train_Pattern.Feature_Length.Min, self.hp.Train.Segment_Size),
@@ -109,7 +114,10 @@ class Trainer:
             )
         inference_dataset = Inference_Dataset(
             token_dict= token_dict,
-            texts= self.hp.Train.Inference_in_Train.Text
+            speaker_dict= speaker_dict,
+            texts= self.hp.Train.Inference_in_Train.Text,
+            speakers= self.hp.Train.Inference_in_Train.Speaker,
+            languages= self.hp.Train.Inference_in_Train.Language
             )
 
         if self.gpu_id == 0:
@@ -155,7 +163,7 @@ class Trainer:
             pin_memory= True
             )
 
-    def Model_Generate(self):        
+    def Model_Generate(self):
         self.model_dict = {
             'HierSpeech': HierSpeech(self.hp).to(self.device),
             'Discriminator': Discriminator(
@@ -174,6 +182,18 @@ class Trainer:
                 ),
             'R1': R1_Regulator()
             }
+        
+        self.mel_func = partial(
+            mel_spectrogram,
+            n_fft= self.hp.Sound.N_FFT,
+            num_mels= self.hp.Sound.Mel_Dim,
+            sampling_rate= self.hp.Sound.Sample_Rate,
+            hop_size= self.hp.Sound.Frame_Shift,
+            win_size= self.hp.Sound.Frame_Length,
+            fmin= 0,
+            fmax= None
+            )
+        
         self.optimizer_dict = {
             'HierSpeech': torch.optim.AdamW(
                 params= self.model_dict['HierSpeech'].parameters(),
@@ -189,15 +209,13 @@ class Trainer:
                 ),
             }
         self.scheduler_dict = {
-            'HierSpeech': torch.optim.lr_scheduler.ExponentialLR(
+            'HierSpeech': Noam_Scheduler(
                 optimizer= self.optimizer_dict['HierSpeech'],
-                gamma= self.hp.Train.Learning_Rate.Decay,
-                last_epoch= -1
+                warmup_steps= self.hp.Train.Learning_Rate.Warmup_Step
                 ),
-            'Discriminator': torch.optim.lr_scheduler.ExponentialLR(
+            'Discriminator': Noam_Scheduler(
                 optimizer= self.optimizer_dict['Discriminator'],
-                gamma= self.hp.Train.Learning_Rate.Decay,
-                last_epoch= -1
+                warmup_steps= self.hp.Train.Learning_Rate.Warmup_Step
                 ),
             }
 
@@ -206,23 +224,25 @@ class Trainer:
         # if self.gpu_id == 0:
         #     logging.info(self.model_dict['HierSpeech'])
 
-    def Train_Step(self, tokens, token_lengths, features, feature_lengths, audios):
+    def Train_Step(self, tokens, token_lengths, speakers, linear_spectrograms, linear_spectrogram_lengths, audios):
         loss_dict = {}
         tokens = tokens.to(self.device, non_blocking=True)
         token_lengths = token_lengths.to(self.device, non_blocking=True)
-        features = features.to(self.device, non_blocking=True)
-        feature_lengths = feature_lengths.to(self.device, non_blocking=True)
+        speakers = speakers.to(self.device, non_blocking=True)
+        linear_spectrograms = linear_spectrograms.to(self.device, non_blocking=True)
+        linear_spectrogram_lengths = linear_spectrogram_lengths.to(self.device, non_blocking=True)
         audios = audios.to(self.device, non_blocking=True)
 
         with torch.cuda.amp.autocast(enabled= self.hp.Use_Mixed_Precision):
             audio_predictions_slice, audios_slice, mel_predictions_slice, mels_slice, \
             encoding_means, encoding_log_stds, linguistic_flows, linguistic_log_stds, \
             linguistic_means, linguistic_log_stds, acoustic_flows, acoustic_log_stds, \
-            duration_losses, token_predictions, _ = self.model_dict['HierSpeech'](
+            token_predictions, duration_losses, _ = self.model_dict['HierSpeech'](
                 tokens= tokens,
                 token_lengths= token_lengths,
-                features= features,
-                feature_lengths= feature_lengths,
+                speakers= speakers,
+                linear_spectrograms= linear_spectrograms,
+                linear_spectrogram_lengths= linear_spectrogram_lengths,
                 audios= audios
                 )
             
@@ -245,15 +265,16 @@ class Trainer:
 
         self.scaler.step(self.optimizer_dict['Discriminator'])
         self.scaler.update()
+        self.scheduler_dict['Discriminator'].step()
 
         with torch.cuda.amp.autocast(enabled= self.hp.Use_Mixed_Precision):
             discriminations_list_for_real, feature_maps_list_for_real = self.model_dict['Discriminator'](audios_slice,)
             discriminations_list_for_fake, feature_maps_list_for_fake = self.model_dict['Discriminator'](audio_predictions_slice)
             with torch.cuda.amp.autocast(enabled= False):
                 feature_masks = Mask_Generate(
-                    lengths= feature_lengths,
-                    max_length= features.size(2)
-                    ).to(features.device)
+                    lengths= linear_spectrogram_lengths,
+                    max_length= linear_spectrograms.size(2)
+                    ).to(linear_spectrograms.device)
                         
                 loss_dict['STFT'] = self.criterion_dict['MAE'](
                     mel_predictions_slice,
@@ -263,17 +284,17 @@ class Trainer:
                 loss_dict['TokenCTC'] = self.criterion_dict['TokenCTC'](
                     log_probs= token_predictions.permute(2, 0, 1),  # [Feature_t, Batch, Token_n]
                     targets= tokens,
-                    input_lengths= feature_lengths,
+                    input_lengths= linear_spectrogram_lengths,
                     target_lengths= token_lengths
                     )
-                loss_dict['Encoding_KLD'] = Flow_KL_Loss(
+                loss_dict['Linguistic_KLD'] = Flow_KL_Loss(
                     encoding_means= encoding_means,
                     encoding_log_stds= encoding_log_stds,
                     flows= linguistic_flows,
                     flow_log_stds= linguistic_log_stds,
                     masks= ~feature_masks.unsqueeze(1)
                     )
-                loss_dict['Linguistic_KLD'] = Flow_KL_Loss(
+                loss_dict['Acoustic_KLD'] = Flow_KL_Loss(
                     encoding_means= linguistic_means,
                     encoding_log_stds= linguistic_log_stds,
                     flows= acoustic_flows,
@@ -282,14 +303,14 @@ class Trainer:
                     )
                 loss_dict['Adversarial'] = Generator_Loss(discriminations_list_for_fake)
                 loss_dict['Feature_Map'] = Feature_Map_Loss(feature_maps_list_for_real, feature_maps_list_for_fake)
-            
+
         self.optimizer_dict['HierSpeech'].zero_grad()
         self.scaler.scale(
             loss_dict['STFT'] * self.hp.Train.Learning_Rate.Lambda.STFT +
             loss_dict['Duration'] +
             loss_dict['TokenCTC'] * self.hp.Train.Learning_Rate.Lambda.Token_CTC +
-            loss_dict['Encoding_KLD'] +
             loss_dict['Linguistic_KLD'] +
+            loss_dict['Acoustic_KLD'] +
             loss_dict['Adversarial'] +
             loss_dict['Feature_Map'] * self.hp.Train.Learning_Rate.Lambda.Feature_Map
             ).backward()
@@ -304,6 +325,7 @@ class Trainer:
 
         self.scaler.step(self.optimizer_dict['HierSpeech'])
         self.scaler.update()
+        self.scheduler_dict['HierSpeech'].step()
 
         self.steps += 1
         self.tqdm.update(1)
@@ -313,12 +335,13 @@ class Trainer:
             self.scalar_dict['Train']['Loss/{}'.format(tag)] += loss
 
     def Train_Epoch(self):
-        for tokens, token_lengths, features, feature_lengths, audios in self.dataloader_dict['Train']:
+        for tokens, token_lengths, speakers, linear_spectrograms, linear_spectrogram_lengths, audios in self.dataloader_dict['Train']:
             self.Train_Step(
                 tokens= tokens,
                 token_lengths= token_lengths,
-                features= features,
-                feature_lengths= feature_lengths,
+                speakers= speakers,
+                linear_spectrograms= linear_spectrograms,
+                linear_spectrogram_lengths= linear_spectrogram_lengths,
                 audios= audios
                 )
 
@@ -352,26 +375,25 @@ class Trainer:
             if self.steps >= self.hp.Train.Max_Step:
                 return
 
-        self.scheduler_dict['Discriminator'].step()
-        self.scheduler_dict['HierSpeech'].step()
-
-    def Evaluation_Step(self, tokens, token_lengths, features, feature_lengths, audios):
+    def Evaluation_Step(self, tokens, token_lengths, speakers, linear_spectrograms, linear_spectrogram_lengths, audios):
         loss_dict = {}
         tokens = tokens.to(self.device, non_blocking=True)
         token_lengths = token_lengths.to(self.device, non_blocking=True)
-        features = features.to(self.device, non_blocking=True)
-        feature_lengths = feature_lengths.to(self.device, non_blocking=True)
+        speakers = speakers.to(self.device, non_blocking=True)
+        linear_spectrograms = linear_spectrograms.to(self.device, non_blocking=True)
+        linear_spectrogram_lengths = linear_spectrogram_lengths.to(self.device, non_blocking=True)
         audios = audios.to(self.device, non_blocking=True)
 
         with torch.cuda.amp.autocast(enabled= self.hp.Use_Mixed_Precision):
             audio_predictions_slice, audios_slice, mel_predictions_slice, mels_slice, \
             encoding_means, encoding_log_stds, linguistic_flows, linguistic_log_stds, \
             linguistic_means, linguistic_log_stds, acoustic_flows, acoustic_log_stds, \
-            duration_losses, token_predictions, _ = self.model_dict['HierSpeech'](
+            token_predictions, duration_losses, alignments = self.model_dict['HierSpeech'](
                 tokens= tokens,
                 token_lengths= token_lengths,
-                features= features,
-                feature_lengths= feature_lengths,
+                speakers= speakers,
+                linear_spectrograms= linear_spectrograms,
+                linear_spectrogram_lengths= linear_spectrogram_lengths,
                 audios= audios
                 )
 
@@ -380,9 +402,9 @@ class Trainer:
             discriminations_list_for_fake, feature_maps_list_for_fake = self.model_dict['Discriminator'](audio_predictions_slice)
             with torch.cuda.amp.autocast(enabled= False):
                 feature_masks = Mask_Generate(
-                    lengths= feature_lengths,
-                    max_length= features.size(2)
-                    ).to(features.device)
+                    lengths= linear_spectrogram_lengths,
+                    max_length= linear_spectrograms.size(2)
+                    ).to(linear_spectrograms.device)
 
                 loss_dict['STFT'] = self.criterion_dict['MAE'](
                     mel_predictions_slice,
@@ -392,17 +414,17 @@ class Trainer:
                 loss_dict['TokenCTC'] = self.criterion_dict['TokenCTC'](
                     log_probs= token_predictions.permute(2, 0, 1),  # [Feature_t, Batch, Token_n]
                     targets= tokens,
-                    input_lengths= feature_lengths,
+                    input_lengths= linear_spectrogram_lengths,
                     target_lengths= token_lengths
                     )
-                loss_dict['Encoding_KLD'] = Flow_KL_Loss(
+                loss_dict['Linguistic_KLD'] = Flow_KL_Loss(
                     encoding_means= encoding_means,
                     encoding_log_stds= encoding_log_stds,
                     flows= linguistic_flows,
                     flow_log_stds= linguistic_log_stds,
                     masks= ~feature_masks.unsqueeze(1)
                     )
-                loss_dict['Linguistic_KLD'] = Flow_KL_Loss(
+                loss_dict['Acoustic_KLD'] = Flow_KL_Loss(
                     encoding_means= linguistic_means,
                     encoding_log_stds= linguistic_log_stds,
                     flows= acoustic_flows,
@@ -417,6 +439,8 @@ class Trainer:
         for tag, loss in loss_dict.items():
             loss = reduce_tensor(loss.data, self.num_gpus).item() if self.num_gpus > 1 else loss.item()
             self.scalar_dict['Evaluation']['Loss/{}'.format(tag)] += loss
+            
+        return alignments
 
     def Evaluation_Epoch(self):
         logging.info('(Steps: {}) Start evaluation in GPU {}.'.format(self.steps, self.gpu_id))
@@ -424,16 +448,17 @@ class Trainer:
         for model in self.model_dict.values():
             model.eval()
 
-        for step, (tokens, token_lengths, features, feature_lengths, audios) in tqdm(
+        for step, (tokens, token_lengths, speakers, linear_spectrograms, linear_spectrogram_lengths, audios) in tqdm(
             enumerate(self.dataloader_dict['Eval'], 1),
             desc='[Evaluation]',
             total= math.ceil(len(self.dataloader_dict['Eval'].dataset) / self.hp.Train.Batch_Size / self.num_gpus)
             ):
-            self.Evaluation_Step(
+            target_alignments = self.Evaluation_Step(
                 tokens= tokens,
                 token_lengths= token_lengths,
-                features= features,
-                feature_lengths= feature_lengths,
+                speakers= speakers,
+                linear_spectrograms= linear_spectrograms,
+                linear_spectrogram_lengths= linear_spectrogram_lengths,
                 audios= audios
                 )
 
@@ -443,19 +468,20 @@ class Trainer:
                 for tag, loss in self.scalar_dict['Evaluation'].items()
                 }
             self.writer_dict['Evaluation'].add_scalar_dict(self.scalar_dict['Evaluation'], self.steps)
-            self.writer_dict['Evaluation'].add_histogram_model(self.model_dict['HierSpeech'], 'HierSpeech', self.steps, delete_keywords=[])
-            self.writer_dict['Evaluation'].add_histogram_model(self.model_dict['Discriminator'], 'Discriminator', self.steps, delete_keywords=[])
+            # self.writer_dict['Evaluation'].add_histogram_model(self.model_dict['HierSpeech'], 'HierSpeech', self.steps, delete_keywords=[])
+            # self.writer_dict['Evaluation'].add_histogram_model(self.model_dict['Discriminator'], 'Discriminator', self.steps, delete_keywords=[])
         
             index = np.random.randint(0, tokens.size(0))
 
             with torch.inference_mode():
-                prediction_audios, *_, log_f0_predictions, alignments = self.model_dict['HierSpeech'](
+                prediction_audios, alignments = self.model_dict['HierSpeech'].Inference(
                     tokens= tokens[index].unsqueeze(0).to(self.device),
                     token_lengths= token_lengths[index].unsqueeze(0).to(self.device),
+                    speakers= speakers[index].unsqueeze(0).to(self.device),
                     )
             
             token_length = token_lengths[index]
-            target_feature_length = feature_lengths[index]
+            target_feature_length = linear_spectrogram_lengths[index]
             prediction_feature_length = alignments[0].sum().long()
             target_audio_length = target_feature_length * self.hp.Sound.Frame_Shift
             prediction_audio_length = prediction_feature_length * self.hp.Sound.Frame_Shift
@@ -463,37 +489,20 @@ class Trainer:
             target_audio = audios[index, :target_audio_length]
             prediction_audio = prediction_audios[0, :prediction_audio_length]
 
-            target_feature = mel_spectrogram(
-                target_audio.unsqueeze(0),
-                n_fft= self.hp.Sound.N_FFT,
-                num_mels= self.hp.Sound.Mel_Dim,
-                sampling_rate= self.hp.Sound.Sample_Rate,
-                hop_size= self.hp.Sound.Frame_Shift,
-                win_size= self.hp.Sound.Frame_Length,
-                fmin= 0,
-                fmax= None
-                ).squeeze(0).cpu().numpy()
-            
-            prediction_feature = mel_spectrogram(
-                prediction_audio.unsqueeze(0),
-                n_fft= self.hp.Sound.N_FFT,
-                num_mels= self.hp.Sound.Mel_Dim,
-                sampling_rate= self.hp.Sound.Sample_Rate,
-                hop_size= self.hp.Sound.Frame_Shift,
-                win_size= self.hp.Sound.Frame_Length,
-                fmin= 0,
-                fmax= None
-                ).squeeze(0).cpu().numpy()
+            target_mel = self.mel_func(target_audio[None])[0, :, :target_audio_length].cpu().numpy()
+            prediction_mel = self.mel_func(prediction_audio[None])[0, :, :prediction_audio_length].cpu().numpy()
             
             target_audio = target_audio.cpu().numpy()
             prediction_audio = prediction_audio.cpu().numpy()
 
-            prediction_alignment = alignments[0, :prediction_feature_length, :token_length].cpu().numpy()
+            target_alignment = target_alignments[index, :target_feature_length, :token_length].T.cpu().numpy()
+            prediction_alignment = alignments[0, :prediction_feature_length, :token_length].T.cpu().numpy()
 
             image_dict = {
-                'Feature/Target': (target_feature, None, 'auto', None, None, None),
-                'Feature/Prediction': (prediction_feature, None, 'auto', None, None, None),
-                'Duration/Prediction': (prediction_alignment.T, None, 'auto', None, None, None),
+                'Feature/Target': (target_mel, None, 'auto', None, None, None),
+                'Feature/Prediction': (prediction_mel, None, 'auto', None, None, None),
+                'Duration/Target': (target_alignment, None, 'auto', None, None, None),
+                'Duration/Prediction': (prediction_alignment, None, 'auto', None, None, None),
                 }
             audio_dict = {
                 'Audio/Target': (target_audio, self.hp.Sound.Sample_Rate),
@@ -514,9 +523,10 @@ class Trainer:
                     )
                 wandb.log(
                     data= {
-                        'Evaluation.Feature.Target': wandb.Image(target_feature),
-                        'Evaluation.Feature.Prediction': wandb.Image(prediction_feature),
-                        'Evaluation.Alignment': wandb.Image(prediction_alignment.T),
+                        'Evaluation.Feature.Target': wandb.Image(target_mel),
+                        'Evaluation.Feature.Prediction': wandb.Image(prediction_mel),
+                        'Evaluation.Alignment.Target': wandb.Image(target_alignment),
+                        'Evaluation.Alignment.Prediction': wandb.Image(prediction_alignment),
                         'Evaluation.Audio.Target': wandb.Audio(
                             target_audio,
                             sample_rate= self.hp.Sound.Sample_Rate,
@@ -538,13 +548,15 @@ class Trainer:
             model.train()
 
     @torch.inference_mode()
-    def Inference_Step(self, tokens, token_lengths, texts, pronunciations, start_index= 0, tag_step= False):
+    def Inference_Step(self, tokens, token_lengths, speakers, texts, pronunciations, speaker_labels, start_index= 0, tag_step= False):
         tokens = tokens.to(self.device, non_blocking=True)
         token_lengths = token_lengths.to(self.device, non_blocking=True)
+        speakers = speakers.to(self.device, non_blocking=True)
 
-        audio_predictions, *_, alignments = self.model_dict['HierSpeech'](
+        prediction_audios, alignments = self.model_dict['HierSpeech'].Inference(
             tokens= tokens,
             token_lengths= token_lengths,
+            speakers= speakers
             )
 
         feature_lengths = alignments.sum(dim= [1, 2]).long()
@@ -553,17 +565,8 @@ class Trainer:
             for length in feature_lengths
             ]
 
-        feature_predictions = mel_spectrogram(
-            audio_predictions,
-            n_fft= self.hp.Sound.N_FFT,
-            num_mels= self.hp.Sound.Mel_Dim,
-            sampling_rate= self.hp.Sound.Sample_Rate,
-            hop_size= self.hp.Sound.Frame_Shift,
-            win_size= self.hp.Sound.Frame_Length,
-            fmin= 0,
-            fmax= None
-            ).cpu().numpy()
-        audio_predictions = audio_predictions.cpu().numpy()
+        prediction_mels = self.mel_func(prediction_audios).cpu().numpy()
+        prediction_audios = prediction_audios.cpu().numpy()
         alignments = alignments.cpu().numpy()
 
         files = []
@@ -576,7 +579,7 @@ class Trainer:
         os.makedirs(os.path.join(self.hp.Inference_Path, 'Step-{}'.format(self.steps), 'PNG').replace('\\', '/'), exist_ok= True)
         os.makedirs(os.path.join(self.hp.Inference_Path, 'Step-{}'.format(self.steps), 'WAV').replace('\\', '/'), exist_ok= True)
         for index, (
-            feature,
+            mel,
             audio,
             alignment,
             token_length,
@@ -584,22 +587,24 @@ class Trainer:
             audio_length,
             text,
             pronunciation,
+            speaker,
             file
             ) in enumerate(zip(
-            feature_predictions,
-            audio_predictions,
+            prediction_mels,
+            prediction_audios,
             alignments,
             token_lengths,
             feature_lengths,
             audio_lengths,
             texts,
             pronunciations,
+            speaker_labels,
             files
             )):
-            title = 'Text: {}'.format(text if len(text) < 90 else text[:90] + '…')
+            title = 'Text: {}    Speaker: {}'.format(text if len(text) < 90 else text[:90], speaker)
             new_figure = plt.figure(figsize=(20, 5 * 3), dpi=100)
             ax = plt.subplot2grid((3, 1), (0, 0))
-            plt.imshow(feature[:, :feature_length], aspect='auto', origin='lower')
+            plt.imshow(mel[:, :feature_length], aspect='auto', origin='lower')
             plt.title(f'Prediction  {title}')
             plt.colorbar(ax= ax)
             ax = plt.subplot2grid((3, 1), (1, 0), rowspan= 2)
@@ -610,7 +615,7 @@ class Trainer:
                 ['<S>'] + list(pronunciation) + ['<E>'],
                 fontsize = 10
                 )
-            plt.colorbar(ax= ax)            
+            plt.colorbar(ax= ax)
             plt.tight_layout()
             plt.savefig(os.path.join(self.hp.Inference_Path, 'Step-{}'.format(self.steps), 'PNG', '{}.png'.format(file)).replace('\\', '/'))
             plt.close(new_figure)
@@ -631,12 +636,12 @@ class Trainer:
             model.eval()
 
         batch_size = self.hp.Inference_Batch_Size or self.hp.Train.Batch_Size
-        for step, (tokens, token_lengths, texts, pronunciations) in tqdm(
+        for step, (tokens, token_lengths, speakers, texts, pronunciations, speaker_labels) in tqdm(
             enumerate(self.dataloader_dict['Inference']),
             desc='[Inference]',
             total= math.ceil(len(self.dataloader_dict['Inference'].dataset) / batch_size)
             ):
-            self.Inference_Step(tokens, token_lengths, texts, pronunciations, start_index= step * batch_size)
+            self.Inference_Step(tokens, token_lengths, speakers, texts, pronunciations, speaker_labels, start_index= step * batch_size)
 
         for model in self.model_dict.values():
             model.train()
