@@ -155,7 +155,7 @@ Log_Path: './results/Log'
 Weights_and_Biases:
     # Use: true
     Use: false
-    Project: 'VITS'
+    Project: 'HierSpeech'
     Entity: 'codejin'
     Name: 'VCTK'
     Save_Checkpoint:

@@ -489,8 +489,8 @@ class Trainer:
             target_audio = audios[index, :target_audio_length]
             prediction_audio = prediction_audios[0, :prediction_audio_length]
 
-            target_mel = self.mel_func(target_audio[None])[0, :, :target_audio_length].cpu().numpy()
-            prediction_mel = self.mel_func(prediction_audio[None])[0, :, :prediction_audio_length].cpu().numpy()
+            target_mel = self.mel_func(target_audio[None])[0, :, :target_feature_length].cpu().numpy()
+            prediction_mel = self.mel_func(prediction_audio[None])[0, :, :prediction_feature_length].cpu().numpy()
             
             target_audio = target_audio.cpu().numpy()
             prediction_audio = prediction_audio.cpu().numpy()
